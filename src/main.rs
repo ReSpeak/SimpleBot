@@ -40,6 +40,7 @@ struct Args {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SettingsFile {
 	/// The address of the server to connect to
 	///
@@ -69,7 +70,7 @@ fn main() -> Result<(), failure::Error> {
 	// Parse command line options
 	let args = Args::from_args();
 
-	// TODO Read log config
+	// Create logger
 	let logger = {
 		let decorator = slog_term::TermDecorator::new().build();
 		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
@@ -141,12 +142,6 @@ fn main() -> Result<(), failure::Error> {
 				.log_commands(args.verbose >= 1)
 				.log_packets(args.verbose >= 2)
 				.log_udp_packets(args.verbose >= 3);
-
-			// Optionally set the key of this client, otherwise a new key is generated.
-			let con_config = con_config.private_key_str(
-				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 			// Connect
 			Connection::new(con_config)
