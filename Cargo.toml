@@ -1,0 +1,8 @@
+[package]
+name = "simple-bot"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+edition = "2018"
+
+[dependencies]
+tsclientlib = "../tsclientlib/tsclientlib"

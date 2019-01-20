@@ -1,0 +1,7 @@
+max_width = 80
+
+hard_tabs = true
+fn_single_line = true
+format_strings = true
+use_try_shorthand = true
+where_single_line = true
