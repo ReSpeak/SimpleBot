@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use failure::format_err;
 use futures::{Future, Stream};
 use futures::sync::oneshot;
 use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use regex::Regex;
 use serde::Deserialize;
 use slog::{debug, error, info, o, warn, Drain, Logger};
@@ -13,15 +15,22 @@ use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
 	ClientId, ConnectionLock, ConnectOptions, Connection, DisconnectOptions,
-	Reason, TextMessageTargetMode,
+	InvokerRef, Reason, TextMessageTargetMode,
 };
 
 const SETTINGS_FILENAME: &str = "settings.toml";
+/// Dynamically added actions. This file will be overwritten automatically.
+const DYNAMIC_FILENAME: &str = "dynamic.toml";
 const PRIVATE_KEY_FILENAME: &str = "private.key";
+
+mod action;
+mod builtins;
+
+use crate::action::{ActionDefinition, ActionList};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(long = "settings", help = "The path of the settings file")]
 	settings: Option<String>,
@@ -39,32 +48,81 @@ struct Args {
 	// 3. Print udp packets
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SettingsFile {
+struct ActionFile {
+	#[serde(default = "Vec::new")]
+	on_message: Vec<ActionDefinition>,
+	#[serde(default = "Vec::new")]
+	on_poke: Vec<ActionDefinition>,
+	#[serde(default = "Vec::new")]
+	include: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Settings {
 	/// The address of the server to connect to
 	///
 	/// # Default
 	/// `localhost`
-	address: Option<String>,
+	#[serde(default = "default_address")]
+	address: String,
 	/// The name of the bot.
 	///
 	/// # Default
 	/// `SimpleBot`
-	name: Option<String>,
+	#[serde(default = "default_name")]
+	name: String,
 	/// The disconnect message of the bot.
 	///
 	/// # Default
 	/// `Disconnecting`
-	disconnect_message: Option<String>,
+	#[serde(default = "default_disconnect_message")]
+	disconnect_message: String,
+
+	/// The prefix for builtin commands.
+	///
+	/// # Default
+	/// `.`
+	#[serde(default = "default_prefix")]
+	prefix: String,
+
+	#[serde(default = "Default::default")]
+	actions: ActionFile,
 }
 
-#[derive(Debug)]
-struct Settings {
-	address: String,
-	name: String,
-	disconnect_message: String,
+pub struct Bot {
+	logger: Logger,
+	actions: ActionList,
+	settings: Settings,
 }
+
+#[derive(Clone, Debug)]
+struct Message<'a> {
+	/// If this is `None`, it means poke.
+	mode: Option<TextMessageTargetMode>,
+	invoker: InvokerRef<'a>,
+	message: &'a str,
+}
+
+impl Default for Settings {
+	fn default() -> Self {
+		Self {
+			address: default_address(),
+			name: default_name(),
+			disconnect_message: default_disconnect_message(),
+			prefix: default_prefix(),
+
+			actions: Default::default(),
+		}
+	}
+}
+
+fn default_address() -> String { "localhost".into() }
+fn default_name() -> String { "SimpleBot".into() }
+fn default_disconnect_message() -> String { "Disconnecting".into() }
+fn default_prefix() -> String { ".".into() }
 
 fn main() -> Result<(), failure::Error> {
 	// Parse command line options
@@ -96,14 +154,8 @@ fn main() -> Result<(), failure::Error> {
 		Ok(r) => toml::from_str(&r).unwrap(),
 		Err(e) => {
 			info!(logger, "Failed to read settings, using defaults"; "error" => ?e);
-			SettingsFile::default()
+			Settings::default()
 		}
-	};
-	let settings = Settings {
-		address: settings.address.unwrap_or_else(|| "localhost".parse().unwrap()),
-		name: settings.name.unwrap_or_else(|| "SimpleBot".into()),
-		disconnect_message: settings.disconnect_message.unwrap_or_else(||
-			"Disconnecting".into())
 	};
 
 	// Load private key
@@ -130,27 +182,34 @@ fn main() -> Result<(), failure::Error> {
 		}
 	};
 
-	let (disconnect_send, disconnect_recv) = oneshot::channel();
 	let disconnect_message = settings.disconnect_message.clone();
-	let logger2 = logger.clone();
+	let con_config = ConnectOptions::new(settings.address.clone())
+		.private_key(private_key)
+		.name(settings.name.clone())
+		.logger(logger.clone())
+		.log_commands(args.verbose >= 1)
+		.log_packets(args.verbose >= 2)
+		.log_udp_packets(args.verbose >= 3);
+
+	let bot = Arc::new(Mutex::new(Bot {
+		logger: logger.clone(),
+		actions: ActionList::default(),
+		settings,
+	}));
+
+	let (disconnect_send, disconnect_recv) = oneshot::channel();
 	tokio::run(
 		futures::lazy(move || {
-			let con_config = ConnectOptions::new(settings.address)
-				.private_key(private_key)
-				.name(settings.name)
-				.logger(logger.clone())
-				.log_commands(args.verbose >= 1)
-				.log_packets(args.verbose >= 2)
-				.log_udp_packets(args.verbose >= 3);
-
 			// Connect
 			Connection::new(con_config)
 		})
 		.and_then(|con| {
 			con.add_on_disconnect(Box::new(move || disconnect_send.send(()).unwrap()));
 			// Listen to events
-			con.add_on_event("listener".into(), Box::new(move |c, e|
-				handle_event(&logger2, c, e)));
+			con.add_on_event("listener".into(), Box::new(move |c, e| {
+				let mut bot = bot.lock();
+				handle_event(&mut *bot, c, e)
+			}));
 
 			Ok(con)
 		})
@@ -221,7 +280,7 @@ fn respond(
 	}
 }
 
-fn handle_event(logger: &Logger, con: &ConnectionLock, event: &[Event]) {
+fn handle_event(bot: &mut Bot, con: &ConnectionLock, event: &[Event]) {
 	lazy_static! {
 		static ref CONTAINS_QUIT: Regex = Regex::new(
 			r"(?i)quit|leave|exit|dumb").unwrap();
@@ -231,30 +290,33 @@ fn handle_event(logger: &Logger, con: &ConnectionLock, event: &[Event]) {
 
 	for e in event {
 		match e {
-			Event::TextMessage { mode, from, message } => {
+			Event::TextMessage { mode, invoker, message } => {
 				// Ignore messages from ourself
-				if from.map(|id| id == con.own_client).unwrap_or_default() {
+				if invoker.id == con.own_client {
 					continue;
 				}
 
-				debug!(logger, "Got message"; "mode" => ?mode,
-					"from" => ?from, "message" => message);
+				debug!(bot.logger, "Got message"; "mode" => ?mode,
+					"invoker" => ?invoker, "message" => message);
 				if CONTAINS_QUIT.is_match(message) {
-					let logger = logger.clone();
+					let logger = bot.logger.clone();
 					const QUIT_HELP: &str = "I will leave if you poke me with arrows";
-					respond(con, logger.clone(), *mode, *from, QUIT_HELP);
-				} else if CONTAINS_HI.is_match(message) {
-					if let Some(client) = from.and_then(|id| con.server.clients.get(&id)) {
-						let msg = format!("Hi {}, how are you?", client.name);
-						respond(con, logger.clone(), *mode, *from, &msg);
-					}
+					let id = if invoker.id.0 == 0 { None } else { Some(invoker.id) };
+
+					respond(con, logger.clone(), *mode, id, QUIT_HELP);
 				}
 			}
-			Event::Poke { from, message } => {
+			Event::Poke { invoker, message } => {
+				if invoker.id == con.own_client {
+					continue;
+				}
+
+				// TODO Poke back with answer
+
 				if message.eq_ignore_ascii_case("arrows") {
-					info!(logger, "Leaving on request"; "from" => ?from);
+					info!(bot.logger, "Leaving on request"; "invoker" => ?invoker);
 					// We get no disconnect message here
-					let logger = logger.clone();
+					let logger = bot.logger.clone();
 					tokio::spawn(con.to_mut().remove()
 						.map_err(move |e| error!(logger,
 							"Failed to disconnect";
