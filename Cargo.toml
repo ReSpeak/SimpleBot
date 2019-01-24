@@ -8,7 +8,6 @@ edition = "2018"
 directories = "1"
 failure = "0.1"
 futures = "0.1"
-lazy_static = "1"
 parking_lot = "0.7"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
