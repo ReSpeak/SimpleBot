@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt;
 use std::process::Command;
 
 use failure::bail;
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use slog::error;
 use tsclientlib::{ConnectionLock, TextMessageTargetMode};
 
-use crate::{Message, Result};
+use crate::{Bot, Message, Result};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,10 +31,10 @@ pub struct ActionDefinition {
 	pub shell: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct ActionList(pub Vec<Action>);
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Action {
 	/// All matchers have to match for the reaction to be executed.
 	pub matchers: Vec<Matcher>,
@@ -48,11 +49,23 @@ pub enum Matcher {
 	Mode(Option<TextMessageTargetMode>),
 }
 
+type ReactionFunction = Box<for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>> + Send + Sync>;
 pub enum Reaction {
 	Plain(String),
 	Command(String),
 	Shell(String),
-	Function(Box<for<'a> Fn(&ConnectionLock, &'a Message) -> Option<Cow<'a, str>> + Send + Sync>),
+	Function(ReactionFunction),
+}
+
+impl fmt::Debug for Reaction {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			Reaction::Plain(s) => write!(f, "Reaction::Plain({})", s),
+			Reaction::Command(s) => write!(f, "Reaction::Command({})", s),
+			Reaction::Shell(s) => write!(f, "Reaction::Shell({})", s),
+			Reaction::Function(_) => write!(f, "Reaction::Function()"),
+		}
+	}
 }
 
 impl ActionDefinition {
@@ -116,7 +129,7 @@ impl Matcher {
 }
 
 impl Reaction {
-	fn get_mode(m: &Option<TextMessageTargetMode>) -> &'static str {
+	pub fn get_mode(m: &Option<TextMessageTargetMode>) -> &'static str {
 		match m {
 			Some(TextMessageTargetMode::Server) => "server",
 			Some(TextMessageTargetMode::Channel) => "channel",
@@ -127,7 +140,8 @@ impl Reaction {
 	}
 
 	/// If `None` is returned, the next action should be tested.
-	pub fn execute<'a>(&'a self, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a, str>> {
+	pub fn execute<'a>(&'a self, bot: &Bot, con: &ConnectionLock,
+		msg: &'a Message) -> Option<Cow<'a, str>> {
 		match self {
 			Reaction::Plain(s) => Some(Cow::Borrowed(s.as_str())),
 			Reaction::Command(s) |
@@ -202,13 +216,14 @@ impl Reaction {
 
 				Some(res.to_string().into())
 			}
-			Reaction::Function(f) => f(con, msg),
+			Reaction::Function(f) => f(bot, con, msg),
 		}
 	}
 }
 
 impl ActionList {
-	pub fn handle<'a>(&'a self, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a, str>> {
+	pub fn handle<'a>(&'a self, bot: &Bot, con: &ConnectionLock,
+		msg: &'a Message) -> Option<Cow<'a, str>> {
 		'actions: for a in &self.0 {
 			for m in &a.matchers {
 				if !m.matches(msg) {
@@ -217,7 +232,7 @@ impl ActionList {
 			}
 
 			if let Some(a) = &a.reaction {
-				if let Some(res) = a.execute(con, msg) {
+				if let Some(res) = a.execute(bot, con, msg) {
 					if res == "" {
 						return None;
 					} else {

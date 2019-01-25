@@ -131,6 +131,7 @@ pub struct Settings {
 	actions: ActionFile,
 }
 
+#[derive(Debug)]
 pub struct Bot {
 	logger: Logger,
 	base_dir: PathBuf,
@@ -325,6 +326,7 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 	}
 
 	// Load builtins here, otherwise .del will never trigger
+	bot.actions = actions;
 	builtins::init(b2, bot);
 
 	// Dynamic actions
@@ -341,11 +343,11 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 			ActionFile::default()
 		}
 	};
-	if let Err(e) = crate::load_actions(&bot.base_dir, &mut actions,
+	if let Err(e) = crate::load_actions(&bot.base_dir, &mut bot.actions,
 		&dynamic) {
 		bail!("Failed to load dynamic actions: {}", e);
 	}
-	bot.actions = actions;
+	debug!(bot.logger, "Loaded actions"; "actions" => ?bot.actions);
 	Ok(())
 }
 
@@ -436,7 +438,7 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 					invoker: invoker.as_ref(),
 					message,
 				};
-				if let Some(response) = bot.actions.handle(con, &msg) {
+				if let Some(response) = bot.actions.handle(bot, con, &msg) {
 					respond(con, bot.logger.clone(), Some(*mode), Some(invoker.id), response.as_ref());
 				}
 			}
@@ -453,7 +455,7 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 					invoker: invoker.as_ref(),
 					message,
 				};
-				if let Some(response) = bot.actions.handle(con, &msg) {
+				if let Some(response) = bot.actions.handle(bot, con, &msg) {
 					respond(con, bot.logger.clone(), None, Some(invoker.id), response.as_ref());
 				}
 			}

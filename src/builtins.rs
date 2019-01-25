@@ -6,7 +6,7 @@ use std::sync::Weak;
 use futures::{future, Future};
 use parking_lot::RwLock;
 use regex::Regex;
-use slog::{debug, error, info, Logger};
+use slog::{debug, error, info};
 use tsclientlib::ConnectionLock;
 
 use crate::{ActionFile, Bot, Message};
@@ -15,34 +15,40 @@ use crate::action::*;
 /// Add builtin functions to the end of the action list.
 pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 	let p = regex::escape(&bot.settings.prefix);
+
+	let help_regex = Regex::new(&format!("^{}help", p)).unwrap();
+	add_fun(bot, help_regex, move |b, _, _| help(b));
+
+	let list_regex = Regex::new(&format!("^{}list", p)).unwrap();
+	add_fun(bot, list_regex, move |b, _, _| list(b));
+
 	let add_regex = Regex::new(&format!("^{}add",
 		p)).unwrap();
 	let long_add_regex = Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$",
 		p)).unwrap();
 	let b = b2.clone();
-	add_fun(bot, add_regex, move |_, m| add(&b, &long_add_regex, m));
+	add_fun(bot, add_regex, move |bot, _, m| add(&b, bot, &long_add_regex, m));
 
 	let del_regex = Regex::new(&format!("^{}del",
 		p)).unwrap();
 	let long_del_regex = Regex::new(&format!("^{}del (?P<trigger>.*)$",
 		p)).unwrap();
 	let b = b2.clone();
-	add_fun(bot, del_regex, move |_, m| del(&b, &long_del_regex, m));
+	add_fun(bot, del_regex, move |bot, _, m| del(&b, bot, &long_del_regex, m));
 
 	let reload_regex = Regex::new(&format!("^{}reload$", p))
 		.unwrap();
-	add_fun(bot, reload_regex, move |_, _| {
+	add_fun(bot, reload_regex, move |_, _, _| {
 		reload(&b2);
-		None
+		Some("".into())
 	});
 
-	let logger = bot.logger.clone();
 	let quit_regex = Regex::new(&format!("^{}quit$", p))
 		.unwrap();
-	add_fun(bot, quit_regex, move |c, m| quit(&logger, c, m));
+	add_fun(bot, quit_regex, move |b, c, m| quit(b, c, m));
 }
 
-fn add_fun<F: for<'a> Fn(&ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
+fn add_fun<F: for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
 	+ Send + Sync + 'static>(bot: &mut Bot, r: Regex, f: F) {
 	bot.actions.0.push(Action {
 		matchers: vec![Matcher::Regex(r)],
@@ -50,12 +56,7 @@ fn add_fun<F: for<'a> Fn(&ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
 	});
 }
 
-fn add<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
-	let b2 = match bot.upgrade() {
-		Some(r) => r,
-		None => return None,
-	};
-	let b = b2.read();
+fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
 		None => return Some(format!("Usage: {}add <response> on <trigger>",
@@ -103,16 +104,11 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'
 	}
 
 	reload(bot);
-	None
+	Some("".into())
 }
 
 /// Remove everything which matches this trigger.
-fn del<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
-	let b2 = match bot.upgrade() {
-		Some(r) => r,
-		None => return None,
-	};
-	let b = b2.read();
+fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
 		None => return Some(format!("Usage: {}del <trigger>", b.settings.prefix)
@@ -180,11 +176,65 @@ fn reload(b: &Weak<RwLock<Bot>>) {
 	}
 }
 
-fn quit<'a>(logger: &Logger, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a, str>> {
-	info!(logger, "Leaving on request"; "message" => ?msg);
+fn quit<'a>(bot: &Bot, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a, str>> {
+	info!(bot.logger, "Leaving on request"; "message" => ?msg);
 	// We get no disconnect message here
 	tokio::spawn(con.to_mut().remove()
 		// Ignore errors on disconnect
 		.map_err(move |_| ()));
-	None
+	Some("".into())
+}
+
+/// Please do not remove the help message.
+fn help<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
+	Some(format!("This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
+		Use '{prefix}add <reaction> on <trigger>' to add new actions\n\
+		or '{prefix}del <trigger>' to remove them.\n\
+		'{prefix}list' lists all commands and actions.\n\
+		'{prefix}quit' disconnects the bot.", prefix = bot.settings.prefix)
+		.into())
+}
+
+fn list<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
+	let mut matchers = Vec::new();
+	for a in &bot.actions.0 {
+		let mut res = String::new();
+		for m in &a.matchers {
+			match m {
+				Matcher::Regex(r) => {
+					const REMOVE_STRS: &[&str] = &["\\b", "^", "$"];
+
+					let mut r = r.as_str().to_string();
+					let mut i = 0;
+					'outer: while i < r.len() {
+						for p in REMOVE_STRS {
+							if (&r[i..]).starts_with(p) {
+								r.replace_range(i..i+p.len(), "");
+								continue 'outer;
+							}
+						}
+
+						// Next char
+						let mut indices = (&r[i..]).char_indices();
+						indices.next().unwrap();
+						i += if let Some(l) = indices.next() {
+							l.0
+						} else {
+							break;
+						};
+					}
+					r = r.replace("\\.", ".");
+					res.push_str(&r);
+				}
+				Matcher::Mode(m) => res.push_str(&format!(" (only in {} mode)",
+					Reaction::get_mode(m))),
+			}
+		}
+		matchers.push(res);
+	}
+	matchers.sort_unstable();
+	matchers.dedup();
+	let res = format!("\n{}", matchers.join("\n"));
+
+	Some(res.into())
 }
