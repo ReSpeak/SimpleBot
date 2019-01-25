@@ -202,27 +202,10 @@ fn list<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
 		for m in &a.matchers {
 			match m {
 				Matcher::Regex(r) => {
-					const REMOVE_STRS: &[&str] = &["\\b", "^", "$"];
-
 					let mut r = r.as_str().to_string();
-					let mut i = 0;
-					'outer: while i < r.len() {
-						for p in REMOVE_STRS {
-							if (&r[i..]).starts_with(p) {
-								r.replace_range(i..i+p.len(), "");
-								continue 'outer;
-							}
-						}
+					r = r.replace(&['^', '$'][..], "");
+					r = r.replace("\\b", "");
 
-						// Next char
-						let mut indices = (&r[i..]).char_indices();
-						indices.next().unwrap();
-						i += if let Some(l) = indices.next() {
-							l.0
-						} else {
-							break;
-						};
-					}
 					r = r.replace("\\.", ".");
 					res.push_str(&r);
 				}
