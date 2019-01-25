@@ -16,7 +16,7 @@ pub struct ActionDefinition {
 	/// Plain string
 	pub contains: Option<String>,
 	/// Regex
-	pub matches: Option<String>,
+	pub regex: Option<String>,
 	/// Check the chat mode for the message: Either `server`, `channel`,
 	/// `client` or `poke`.
 	pub chat: Option<String>,
@@ -60,14 +60,14 @@ impl ActionDefinition {
 		// Condition
 		let mut res = Action::default();
 		if let Some(contains) = &self.contains {
-			if let Some(matches) = &self.matches {
+			if let Some(matches) = &self.regex {
 				bail!("An action can only have either contains or matches. \
 					This one contains both ({} and {})", contains, matches);
 			}
 			// Only match string at word boundaries
 			res.matchers.push(Matcher::Regex(Regex::new(&format!(r"\b{}\b",
 				regex::escape(contains)))?));
-		} else if let Some(matches) = &self.matches {
+		} else if let Some(matches) = &self.regex {
 			res.matchers.push(Matcher::Regex(Regex::new(matches)?));
 		}
 

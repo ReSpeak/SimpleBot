@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use failure::{bail, format_err};
 use futures::{Future, Stream};
@@ -40,7 +40,7 @@ lazy_static! {
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
 	AppSettings::VersionlessSubcommands]"))]
 struct Args {
-	#[structopt(long = "settings", help = "The path of the settings file")]
+	#[structopt(short = "s", long = "settings", help = "The path of the settings file")]
 	settings: Option<String>,
 
 	#[structopt(
@@ -147,6 +147,18 @@ pub struct Message<'a> {
 	message: &'a str,
 }
 
+impl Default for Bot {
+	fn default() -> Self {
+		Self {
+			logger: LOGGER.clone(),
+			base_dir: PathBuf::new(),
+			settings_path: PathBuf::new(),
+			actions: Default::default(),
+			settings: Default::default(),
+		}
+	}
+}
+
 impl Default for Settings {
 	fn default() -> Self {
 		Self {
@@ -196,61 +208,54 @@ fn main() -> Result<()> {
 		settings_path = base_dir.join(SETTINGS_FILENAME);
 	}
 
-	let (settings, actions) = load_settings(&logger, &base_dir, &settings_path,
-		&Settings::default())?;
-
-	// Load private key
-	let file = Path::new(&settings.key_file);
-	let file = if file.is_absolute() {
-		file.to_path_buf()
-	} else {
-		base_dir.join(&settings.key_file)
-	};
-	let private_key = match fs::read(&file) {
-		Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
-		_ => {
-			// Create new key
-			let key = tsproto::crypto::EccKeyPrivP256::create()?;
-
-			// Create directory
-			if let Err(e) = fs::create_dir_all(&base_dir) {
-				error!(logger, "Failed to create config dictionary"; "error" => ?e);
-			}
-			// Write to file
-			if let Err(e) = fs::write(&file, &key.to_short()) {
-				warn!(logger, "Failed to store the private key, the server \
-					identity will not be the same in the next run";
-					"file" => ?file.to_str(),
-					"error" => ?e);
-			}
-
-			key
-		}
-	};
-
-	let disconnect_message = settings.disconnect_message.clone();
-	let con_config = ConnectOptions::new(settings.address.clone())
-		.private_key(private_key)
-		.name(settings.name.clone())
-		.logger(logger.clone())
-		.log_commands(args.verbose >= 1)
-		.log_packets(args.verbose >= 2)
-		.log_udp_packets(args.verbose >= 3);
-
-	let bot = Arc::new(RwLock::new(Bot {
-		logger: logger.clone(),
-		base_dir,
-		settings_path,
-		actions,
-		settings,
-	}));
-
+	let mut bot = Bot::default();
+	bot.base_dir = base_dir;
+	bot.settings_path = settings_path;
+	let bot = Arc::new(RwLock::new(bot));
+	let private_key;
+	let disconnect_message;
+	let con_config;
 	{
-		let b2 = Arc::downgrade(&bot);
-		let mut bot = bot.write();
-		let bot = &mut *bot;
-		// Add builtins last
-		builtins::init(b2, bot);
+		let mut b = bot.write();
+		load_settings(Arc::downgrade(&bot), &mut *b)?;
+		disconnect_message = b.settings.disconnect_message.clone();
+
+		// Load private key
+		let file = Path::new(&b.settings.key_file);
+		let file = if file.is_absolute() {
+			file.to_path_buf()
+		} else {
+			b.base_dir.join(&b.settings.key_file)
+		};
+		private_key = match fs::read(&file) {
+			Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
+			_ => {
+				// Create new key
+				let key = tsproto::crypto::EccKeyPrivP256::create()?;
+
+				// Create directory
+				if let Err(e) = fs::create_dir_all(&b.base_dir) {
+					error!(logger, "Failed to create config dictionary"; "error" => ?e);
+				}
+				// Write to file
+				if let Err(e) = fs::write(&file, &key.to_short()) {
+					warn!(logger, "Failed to store the private key, the server \
+						identity will not be the same in the next run";
+						"file" => ?file.to_str(),
+						"error" => ?e);
+				}
+
+				key
+			}
+		};
+
+		con_config = ConnectOptions::new(b.settings.address.clone())
+			.private_key(private_key)
+			.name(b.settings.name.clone())
+			.logger(logger.clone())
+			.log_commands(args.verbose >= 1)
+			.log_packets(args.verbose >= 2)
+			.log_udp_packets(args.verbose >= 3);
 	}
 
 	let (disconnect_send, disconnect_recv) = oneshot::channel();
@@ -296,56 +301,52 @@ fn main() -> Result<()> {
 	Ok(())
 }
 
-fn load_settings(logger: &Logger, base_dir: &Path, settings_path: &Path, default_settings: &Settings) -> Result<(Settings, ActionList)> {
+fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 	// Reload settings
-	let settings: Settings;
-	match fs::read_to_string(settings_path) {
+	match fs::read_to_string(&bot.settings_path) {
 		Ok(r) => {
 			match toml::from_str(&r) {
-				Ok(s) => {
-					settings = s;
-				}
-				Err(e) => {
-					bail!("Failed to parse settings: {}", e);
-				}
+				Ok(s) => bot.settings = s,
+				Err(e) => bail!("Failed to parse settings: {}", e),
 			}
 		}
 		Err(e) => {
 			// Only a soft error
-			warn!(logger, "Failed to read settings, using defaults";
+			warn!(bot.logger, "Failed to read settings, using defaults";
 				"error" => ?e);
-			settings = default_settings.clone();
 		}
 	}
 
 	// Reload actions
 	let mut actions = ActionList::default();
-	if let Err(e) = crate::load_actions(base_dir, &mut actions,
-		&settings.actions) {
-		error!(logger, "Failed to load actions"; "error" => %e);
+	if let Err(e) = crate::load_actions(&bot.base_dir, &mut actions,
+		&bot.settings.actions) {
+		error!(bot.logger, "Failed to load actions"; "error" => %e);
 	}
 
+	// Load builtins here, otherwise .del will never trigger
+	builtins::init(b2, bot);
 
 	// Dynamic actions
-	let path = Path::new(&settings.dynamic_actions);
+	let path = Path::new(&bot.settings.dynamic_actions);
 	let path = if path.is_absolute() {
 		path.into()
 	} else {
-		base_dir.join(path)
+		bot.base_dir.join(path)
 	};
 	let dynamic: ActionFile = match fs::read_to_string(&path) {
 		Ok(s) => toml::from_str(&s)?,
 		Err(e) => {
-			debug!(logger, "Dynamic actions not loaded"; "error" => %e);
+			debug!(bot.logger, "Dynamic actions not loaded"; "error" => %e);
 			ActionFile::default()
 		}
 	};
-	if let Err(e) = crate::load_actions(base_dir, &mut actions,
+	if let Err(e) = crate::load_actions(&bot.base_dir, &mut actions,
 		&dynamic) {
 		bail!("Failed to load dynamic actions: {}", e);
 	}
-
-	Ok((settings, actions))
+	bot.actions = actions;
+	Ok(())
 }
 
 fn load_actions(base: &Path, actions: &mut ActionList, f: &ActionFile) -> Result<()> {

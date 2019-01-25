@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use futures::{future, Future};
 use parking_lot::RwLock;
@@ -14,21 +14,22 @@ use crate::action::*;
 
 /// Add builtin functions to the end of the action list.
 pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
+	let p = regex::escape(&bot.settings.prefix);
 	let add_regex = Regex::new(&format!("^{}add",
-		bot.settings.prefix)).unwrap();
+		p)).unwrap();
 	let long_add_regex = Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$",
-		bot.settings.prefix)).unwrap();
+		p)).unwrap();
 	let b = b2.clone();
 	add_fun(bot, add_regex, move |_, m| add(&b, &long_add_regex, m));
 
 	let del_regex = Regex::new(&format!("^{}del",
-		bot.settings.prefix)).unwrap();
+		p)).unwrap();
 	let long_del_regex = Regex::new(&format!("^{}del (?P<trigger>.*)$",
-		bot.settings.prefix)).unwrap();
+		p)).unwrap();
 	let b = b2.clone();
 	add_fun(bot, del_regex, move |_, m| del(&b, &long_del_regex, m));
 
-	let reload_regex = Regex::new(&format!("^{}reload$", bot.settings.prefix))
+	let reload_regex = Regex::new(&format!("^{}reload$", p))
 		.unwrap();
 	add_fun(bot, reload_regex, move |_, _| {
 		reload(&b2);
@@ -36,7 +37,7 @@ pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 	});
 
 	let logger = bot.logger.clone();
-	let quit_regex = Regex::new(&format!("^{}quit$", bot.settings.prefix))
+	let quit_regex = Regex::new(&format!("^{}quit$", p))
 		.unwrap();
 	add_fun(bot, quit_regex, move |c, m| quit(&logger, c, m));
 }
@@ -87,7 +88,7 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'
 
 	dynamic.on_message.push(ActionDefinition {
 		contains: Some(trigger.as_str().into()),
-		matches: None,
+		regex: None,
 		chat: None,
 
 		response: Some(response.as_str().into()),
@@ -141,8 +142,13 @@ fn del<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'
 		}
 	};
 
+	let mut count = 0;
 	dynamic.on_message.retain(|a| {
-		a.contains.as_ref().map(|c| c == trigger).unwrap_or(false)
+		let r = a.contains.as_ref().map(|c| c == trigger).unwrap_or(false);
+		if !r {
+			count += 1;
+		}
+		r
 	});
 
 	// Save
@@ -152,29 +158,22 @@ fn del<'a>(bot: &Weak<RwLock<Bot>>, r: &Regex, msg: &'a Message) -> Option<Cow<'
 	}
 
 	reload(bot);
-	None
+	if count == 1 {
+		Some(format!("Removed {} element", count).into())
+	} else {
+		Some(format!("Removed {} elements", count).into())
+	}
 }
 
-fn reload(bot: &Weak<RwLock<Bot>>) {
-	if let Some(b2) = bot.upgrade() {
+fn reload(b: &Weak<RwLock<Bot>>) {
+	if let Some(b2) = b.upgrade() {
+		let b = b.clone();
 		tokio::spawn(future::lazy(move ||{
 			let mut bot = b2.write();
 
-			match crate::load_settings(
-				&bot.logger,
-				&bot.base_dir,
-				&bot.settings_path,
-				&bot.settings,
-			) {
-				Ok((settings, actions)) => {
-					bot.settings = settings;
-					bot.actions = actions;
-					crate::builtins::init(Arc::downgrade(&b2), &mut *bot);
-					info!(bot.logger, "Reloaded successfully");
-				}
-				Err(e) => {
-					error!(bot.logger, "Failed to reload"; "error" => ?e);
-				}
+			match crate::load_settings(b, &mut bot) {
+				Ok(()) => info!(bot.logger, "Reloaded successfully"),
+				Err(e) => error!(bot.logger, "Failed to reload"; "error" => ?e),
 			}
 			Ok(())
 		}));
