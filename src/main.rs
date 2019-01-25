@@ -2,12 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use failure::format_err;
+use failure::{bail, format_err};
 use futures::{Future, Stream};
 use futures::sync::oneshot;
+use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use serde::Deserialize;
-use slog::{debug, error, info, o, warn, Drain, Logger};
+use serde::{Deserialize, Serialize};
+use slog::{debug, error, o, warn, Drain, Logger};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsclientlib::events::Event;
@@ -17,10 +18,6 @@ use tsclientlib::{
 };
 
 const SETTINGS_FILENAME: &str = "settings.toml";
-/// Dynamically added actions. This file will be overwritten automatically.
-// TODO Move to settings
-const DYNAMIC_FILENAME: &str = "dynamic.toml";
-const PRIVATE_KEY_FILENAME: &str = "private.key";
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -28,6 +25,16 @@ pub mod action;
 pub mod builtins;
 
 use crate::action::{ActionDefinition, ActionList};
+
+lazy_static! {
+	static ref LOGGER: Logger = {
+		let decorator = slog_term::TermDecorator::new().build();
+		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+		let drain = slog_async::Async::new(drain).build().fuse();
+
+		Logger::root(drain, o!())
+	};
+}
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
@@ -49,34 +56,56 @@ struct Args {
 	// 3. Print udp packets
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ActionFile {
-	#[serde(default = "Vec::new")]
-	on_message: Vec<ActionDefinition>,
 	/// Includes other files.
 	///
-	/// The path is always relative to the current file.
+	/// The path is always relative to the current file. Includes will be
+	/// inserted after the declarations in this file.
 	#[serde(default = "Vec::new")]
 	include: Vec<String>,
+
+	// This needs to be second for the toml serialization.
+	#[serde(default = "Vec::new")]
+	on_message: Vec<ActionDefinition>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-enum ChannelDefinition {
+pub enum ChannelDefinition {
 	Id(u64),
 	Name(String),
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Settings {
+pub struct Settings {
+	/// The file which contains the private key.
+	///
+	/// This will be automatically generated on the first run.
+	///
+	/// # Default
+	/// `private.key`
+	#[serde(default = "default_key_file")]
+	key_file: String,
+	/// Dynamically added actions. This file will be overwritten automatically.
+	///
+	/// The actions from this file will be added after the normal actions and
+	/// before the builtins.
+	///
+	/// # Default
+	/// `dynamic.toml`
+	#[serde(default = "default_dynamic_actions")]
+	dynamic_actions: String,
+
 	/// The address of the server to connect to
 	///
 	/// # Default
 	/// `localhost`
 	#[serde(default = "default_address")]
 	address: String,
+	// TODO Support a default channel
 	channel: Option<ChannelDefinition>,
 	/// The name of the bot.
 	///
@@ -121,6 +150,9 @@ pub struct Message<'a> {
 impl Default for Settings {
 	fn default() -> Self {
 		Self {
+			key_file: default_key_file(),
+			dynamic_actions: default_dynamic_actions(),
+
 			address: default_address(),
 			channel: None,
 			name: default_name(),
@@ -132,23 +164,19 @@ impl Default for Settings {
 	}
 }
 
+fn default_key_file() -> String { "private.key".into() }
+
 fn default_address() -> String { "localhost".into() }
 fn default_name() -> String { "SimpleBot".into() }
 fn default_disconnect_message() -> String { "Disconnecting".into() }
 fn default_prefix() -> String { ".".into() }
+fn default_dynamic_actions() -> String { "dynamic.toml".into() }
 
 fn main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
-	// Create logger
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
-
-		slog::Logger::root(drain, o!())
-	};
+	let logger = LOGGER.clone();
 
 	// Load settings
 	let settings_path;
@@ -168,16 +196,16 @@ fn main() -> Result<()> {
 		settings_path = base_dir.join(SETTINGS_FILENAME);
 	}
 
-	let settings = match fs::read_to_string(&settings_path) {
-		Ok(r) => toml::from_str(&r).unwrap(),
-		Err(e) => {
-			info!(logger, "Failed to read settings, using defaults"; "error" => ?e);
-			Settings::default()
-		}
-	};
+	let (settings, actions) = load_settings(&logger, &base_dir, &settings_path,
+		&Settings::default())?;
 
 	// Load private key
-	let file = base_dir.join(PRIVATE_KEY_FILENAME);
+	let file = Path::new(&settings.key_file);
+	let file = if file.is_absolute() {
+		file.to_path_buf()
+	} else {
+		base_dir.join(&settings.key_file)
+	};
 	let private_key = match fs::read(&file) {
 		Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
 		_ => {
@@ -213,7 +241,7 @@ fn main() -> Result<()> {
 		logger: logger.clone(),
 		base_dir,
 		settings_path,
-		actions: ActionList::default(),
+		actions,
 		settings,
 	}));
 
@@ -221,10 +249,6 @@ fn main() -> Result<()> {
 		let b2 = Arc::downgrade(&bot);
 		let mut bot = bot.write();
 		let bot = &mut *bot;
-		if let Err(e) = load_actions(&bot.base_dir, &mut bot.actions, &bot.settings.actions) {
-			error!(bot.logger, "Failed to load actions"; "error" => %e);
-			std::process::exit(1);
-		}
 		// Add builtins last
 		builtins::init(b2, bot);
 	}
@@ -272,6 +296,58 @@ fn main() -> Result<()> {
 	Ok(())
 }
 
+fn load_settings(logger: &Logger, base_dir: &Path, settings_path: &Path, default_settings: &Settings) -> Result<(Settings, ActionList)> {
+	// Reload settings
+	let settings: Settings;
+	match fs::read_to_string(settings_path) {
+		Ok(r) => {
+			match toml::from_str(&r) {
+				Ok(s) => {
+					settings = s;
+				}
+				Err(e) => {
+					bail!("Failed to parse settings: {}", e);
+				}
+			}
+		}
+		Err(e) => {
+			// Only a soft error
+			warn!(logger, "Failed to read settings, using defaults";
+				"error" => ?e);
+			settings = default_settings.clone();
+		}
+	}
+
+	// Reload actions
+	let mut actions = ActionList::default();
+	if let Err(e) = crate::load_actions(base_dir, &mut actions,
+		&settings.actions) {
+		error!(logger, "Failed to load actions"; "error" => %e);
+	}
+
+
+	// Dynamic actions
+	let path = Path::new(&settings.dynamic_actions);
+	let path = if path.is_absolute() {
+		path.into()
+	} else {
+		base_dir.join(path)
+	};
+	let dynamic: ActionFile = match fs::read_to_string(&path) {
+		Ok(s) => toml::from_str(&s)?,
+		Err(e) => {
+			debug!(logger, "Dynamic actions not loaded"; "error" => %e);
+			ActionFile::default()
+		}
+	};
+	if let Err(e) = crate::load_actions(base_dir, &mut actions,
+		&dynamic) {
+		bail!("Failed to load dynamic actions: {}", e);
+	}
+
+	Ok((settings, actions))
+}
+
 fn load_actions(base: &Path, actions: &mut ActionList, f: &ActionFile) -> Result<()> {
 	for a in &f.on_message {
 		actions.0.push(a.to_action()?);
@@ -293,6 +369,7 @@ fn respond(
 	to: Option<ClientId>,
 	msg: &str,
 ) {
+	debug!(logger, "Answering"; "message" => msg, "to" => ?to, "mode" => ?mode);
 	let con_mut = con.to_mut();
 	match mode {
 		Some(TextMessageTargetMode::Client) => if let Some(to) = to {
