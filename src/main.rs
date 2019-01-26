@@ -13,8 +13,8 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
-	ClientId, ConnectionLock, ConnectOptions, Connection, DisconnectOptions,
-	InvokerRef, Reason, TextMessageTargetMode,
+	ConnectionLock, ConnectOptions, Connection, DisconnectOptions, InvokerRef,
+	MessageTarget, Reason,
 };
 
 const SETTINGS_FILENAME: &str = "settings.toml";
@@ -143,7 +143,7 @@ pub struct Bot {
 #[derive(Clone, Debug)]
 pub struct Message<'a> {
 	/// If this is `None`, it means poke.
-	mode: Option<TextMessageTargetMode>,
+	from: MessageTarget,
 	invoker: InvokerRef<'a>,
 	message: &'a str,
 }
@@ -365,101 +365,35 @@ fn load_actions(base: &Path, actions: &mut ActionList, f: &ActionFile) -> Result
 	Ok(())
 }
 
-fn respond(
-	con: &ConnectionLock,
-	logger: Logger,
-	mode: Option<TextMessageTargetMode>,
-	to: Option<ClientId>,
-	msg: &str,
-) {
-	debug!(logger, "Answering"; "message" => msg, "to" => ?to, "mode" => ?mode);
-	let con_mut = con.to_mut();
-	match mode {
-		Some(TextMessageTargetMode::Client) => if let Some(to) = to {
-			if let Some(client) = con_mut.get_server().get_client(&to) {
-				tokio::spawn(client
-					.send_textmessage(msg)
-					.map_err(move |e| error!(logger,
-						"Failed to send message to channel";
-						"error" => ?e)));
-			} else {
-				warn!(logger, "Failed to answer client: Not in \
-					view (this may be fixed later)");
-			}
-		} else {
-			error!(logger, "Got message from client but from is not set");
-		}
-		Some(TextMessageTargetMode::Channel) => {
-			tokio::spawn(con_mut.send_channel_textmessage(msg)
-				.map_err(move |e| error!(logger,
-					"Failed to send message to channel";
-					"error" => ?e)));
-		}
-		Some(TextMessageTargetMode::Server) => {
-			tokio::spawn(con_mut.get_server().send_textmessage(msg)
-				.map_err(move |e| error!(logger,
-					"Failed to send message to channel";
-					"error" => ?e)));
-		}
-		Some(TextMessageTargetMode::Unknown) => {
-			error!(logger, "Unknown text message target");
-		}
-		// Poke
-		None => if let Some(to) = to {
-			// Try to find client
-			if let Some(client) = con.to_mut().get_server().get_client(&to) {
-				tokio::spawn(client.poke(msg)
-					.map_err(move |e| error!(logger,
-						"Failed to poke client"; "error" => ?e)));
-			} else {
-				warn!(logger, "Failed to poke back client: Not in \
-					view (this may be fixed later)");
-			}
-		} else {
-			error!(logger, "Got poke from client but from is not set");
-		}
-	}
-}
-
 fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 	for e in event {
 		match e {
-			Event::TextMessage { mode, invoker, message } => {
+			Event::Message { from, invoker, message } => {
 				// Ignore messages from ourself
 				if invoker.id == con.own_client {
 					continue;
 				}
 
-				debug!(bot.logger, "Got message"; "mode" => ?mode,
+				debug!(bot.logger, "Got message"; "from" => ?from,
 					"invoker" => ?invoker, "message" => message);
 
 				let msg = Message {
-					mode: Some(*mode),
+					from: *from,
 					invoker: invoker.as_ref(),
 					message,
 				};
 				if let Some(response) = bot.actions.handle(bot, con, &msg) {
-					respond(con, bot.logger.clone(), Some(*mode), Some(invoker.id), response.as_ref());
-				}
-			}
-			Event::Poke { invoker, message } => {
-				if invoker.id == con.own_client {
-					continue;
-				}
-
-				debug!(bot.logger, "Got poked"; "invoker" => ?invoker,
-				   "message" => message);
-
-				let msg = Message {
-					mode: None,
-					invoker: invoker.as_ref(),
-					message,
-				};
-				if let Some(response) = bot.actions.handle(bot, con, &msg) {
-					respond(con, bot.logger.clone(), None, Some(invoker.id), response.as_ref());
+					let logger = bot.logger.clone();
+					tokio::spawn(con.to_mut().send_message(*from, response.as_ref())
+						.map_err(move |e| error!(logger,
+							"Failed to send response"; "error" => ?e)));
 				}
 			}
 			_ => {}
 		}
 	}
+}
+
+fn escape_bb(s: &str) -> String {
+	s.replace('[', "\\[")
 }

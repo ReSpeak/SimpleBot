@@ -61,7 +61,7 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
 		None => return Some(format!("Usage: {}add <response> on <trigger>",
-			b.settings.prefix).into()),
+			crate::escape_bb(&b.settings.prefix)).into()),
 	};
 	let response = caps.name("response").unwrap();
 	let trigger = caps.name("trigger").unwrap();
@@ -112,8 +112,8 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
-		None => return Some(format!("Usage: {}del <trigger>", b.settings.prefix)
-			.into()),
+		None => return Some(format!("Usage: {}del <trigger>",
+			crate::escape_bb(&b.settings.prefix)).into()),
 	};
 	let trigger = caps.name("trigger").unwrap().as_str();
 
@@ -192,8 +192,8 @@ fn help<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
 		Use [i]{prefix}add <reaction> on <trigger>[/i] to add new actions\n\
 		or [i]{prefix}del <trigger>[/i] to remove them.\n\
 		[i]{prefix}list[/i] lists all commands and actions.\n\
-		[i]{prefix}quit[/i] disconnects the bot.", prefix = bot.settings.prefix)
-		.into())
+		[i]{prefix}quit[/i] disconnects the bot.",
+		prefix = crate::escape_bb(&bot.settings.prefix)).into())
 }
 
 type ListPages = Vec<String>;
@@ -211,6 +211,7 @@ fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
 						r = r.replace(&['^', '$'][..], "");
 						r = r.replace("\\b", "");
 
+						r = r.replace("\\\\", "\\");
 						r = r.replace("\\.", ".");
 						res.push_str(&r);
 					}
@@ -259,8 +260,8 @@ fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
 		format!("Page {}/{}, use [i]{}list <page>[/i] to show more.{}",
 			page + 1,
 			list.len(),
-			bot.settings.prefix,
-			page_s,
+			crate::escape_bb(&bot.settings.prefix),
+			page_s,//crate::escape_bb(&page_s),
 		)
 	} else {
 		page_s

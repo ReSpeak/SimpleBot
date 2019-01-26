@@ -6,7 +6,7 @@ use failure::bail;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use slog::error;
-use tsclientlib::{ConnectionLock, TextMessageTargetMode};
+use tsclientlib::{ConnectionLock, MessageTarget, TextMessageTargetMode};
 
 use crate::{Bot, Message, Result};
 
@@ -78,6 +78,7 @@ impl ActionDefinition {
 					This one contains both ({} and {})", contains, matches);
 			}
 			// Only match string at word boundaries
+			// TODO Add \b only if the first/last character is_alpha
 			res.matchers.push(Matcher::Regex(Regex::new(&format!(r"\b{}\b",
 				regex::escape(contains)))?));
 		} else if let Some(matches) = &self.regex {
@@ -123,12 +124,31 @@ impl Matcher {
 	pub fn matches(&self, msg: &Message) -> bool {
 		match self {
 			Matcher::Regex(r) => r.is_match(msg.message),
-			Matcher::Mode(m) => *m == msg.mode,
+			Matcher::Mode(m) => match m {
+				Some(TextMessageTargetMode::Server) =>
+					if let MessageTarget::Server = msg.from { true } else { false },
+				Some(TextMessageTargetMode::Channel) =>
+					if let MessageTarget::Channel = msg.from { true } else { false },
+				Some(TextMessageTargetMode::Client) =>
+					if let MessageTarget::Client(_) = msg.from { true } else { false },
+				Some(TextMessageTargetMode::Unknown) => false,
+				None => if let MessageTarget::Poke(_) = msg.from { true }
+					else { false },
+			}
 		}
 	}
 }
 
 impl Reaction {
+	pub fn get_target(m: &MessageTarget) -> &'static str {
+		match m {
+			MessageTarget::Server => "server",
+			MessageTarget::Channel => "channel",
+			MessageTarget::Client(_) => "client",
+			MessageTarget::Poke(_) => "poke",
+		}
+	}
+
 	pub fn get_mode(m: &Option<TextMessageTargetMode>) -> &'static str {
 		match m {
 			Some(TextMessageTargetMode::Server) => "server",
@@ -163,7 +183,8 @@ impl Reaction {
 							// Program name
 							.arg("sh")
 							// Arguments
-							.arg(Self::get_mode(&msg.mode))
+							.arg(Self::get_target(&msg.from))
+							.arg(&msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
 							cmd.arg(uid.0);
@@ -179,7 +200,8 @@ impl Reaction {
 							.arg("/C")
 							.arg(s)
 							// Arguments
-							.arg(Self::get_mode(&msg.mode))
+							.arg(Self::get_target(&msg.from))
+							.arg(&msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
 							cmd.arg(uid.0);
