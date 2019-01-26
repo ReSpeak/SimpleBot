@@ -17,7 +17,10 @@ pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 	let p = regex::escape(&bot.settings.prefix);
 
 	let help_regex = Regex::new(&format!("^{}help", p)).unwrap();
-	add_fun(bot, help_regex, move |b, _, _| help(b));
+	add_fun(bot, help_regex, |b, _, _| help(b));
+
+	let copy_regex = Regex::new(&format!("^{}copy", p)).unwrap();
+	add_fun(bot, copy_regex, |_, _, _| copyright());
 
 	let list_mutex = Mutex::new(None);
 	let list_regex = Regex::new(&format!("^{}list", p)).unwrap();
@@ -141,7 +144,7 @@ fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 
 	let mut count = 0;
 	dynamic.on_message.retain(|a| {
-		let r = a.contains.as_ref().map(|c| c == trigger).unwrap_or(false);
+		let r = a.contains.as_ref().map(|c| c != trigger).unwrap_or(true);
 		if !r {
 			count += 1;
 		}
@@ -186,7 +189,6 @@ fn quit<'a>(bot: &Bot, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a,
 	Some("".into())
 }
 
-/// Please do not remove the help message.
 fn help<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
 	Some(format!("This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
 		Use [i]{prefix}add <reaction> on <trigger>[/i] to add new actions\n\
@@ -194,6 +196,15 @@ fn help<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
 		[i]{prefix}list[/i] lists all commands and actions.\n\
 		[i]{prefix}quit[/i] disconnects the bot.",
 		prefix = crate::escape_bb(&bot.settings.prefix)).into())
+}
+
+/// Please do not remove this message. It serves the purpose of license and
+/// copyright notice, which is required by the MIT and Apache license.
+fn copyright() -> Option<Cow<'static, str>> {
+	Some("This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
+		This software is licensed under MIT and Apache License, Version 2.0.\n\
+		See the website for more information.\n\
+		© 2018–2019 Flakebi".into())
 }
 
 type ListPages = Vec<String>;

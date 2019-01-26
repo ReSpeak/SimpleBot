@@ -19,9 +19,9 @@ structopt = "0.2"
 tokio = "0.1"
 tokio-signal = "0.2"
 toml = "0.4"
-tsclientlib = { path = "../tsclientlib/tsclientlib" }
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib" }
 # TODO Needed to load the private key
-tsproto = { path = "../tsclientlib/tsproto" }
+tsproto = { git = "https://github.com/ReSpeak/tsclientlib" }
 
 [dependencies.slog]
 version = "2"

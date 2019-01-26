@@ -170,8 +170,16 @@ impl Reaction {
 				if let Reaction::Command(_) = self {
 					// Split arguments at spaces
 					let mut split = s.split(' ');
-					output = Command::new(split.next().unwrap()).args(split)
-						.output();
+					let mut cmd = Command::new(split.next().unwrap());
+					cmd.args(split)
+						// Arguments
+						.arg(Self::get_target(&msg.from))
+						.arg(&msg.message)
+						.arg(msg.invoker.name);
+					if let Some(uid) = &msg.invoker.uid {
+						cmd.arg(uid.0);
+					}
+					output = cmd.output();
 				} else {
 					// Shell
 					#[cfg(target_family = "unix")]
