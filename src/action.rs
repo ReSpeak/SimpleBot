@@ -78,9 +78,15 @@ impl ActionDefinition {
 					This one contains both ({} and {})", contains, matches);
 			}
 			// Only match string at word boundaries
-			// TODO Add \b only if the first/last character is_alpha
-			res.matchers.push(Matcher::Regex(Regex::new(&format!(r"\b{}\b",
-				regex::escape(contains)))?));
+			// Add \b only if the first/last character is alphabetix.
+			let mut regex = regex::escape(contains);
+			if regex.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+				regex = format!(r"\b{}", regex);
+			}
+			if regex.chars().last().map(|c| c.is_alphabetic()).unwrap_or(false) {
+				regex = format!(r"{}\b", regex);
+			}
+			res.matchers.push(Matcher::Regex(Regex::new(&regex)?));
 		} else if let Some(matches) = &self.regex {
 			res.matchers.push(Matcher::Regex(Regex::new(matches)?));
 		}
