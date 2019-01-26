@@ -1,4 +1,5 @@
-# SimpleBot
+# SimpleBot [![Build status](https://ci.appveyor.com/api/projects/status/818yy7sak28p1uv9?svg=true)](https://ci.appveyor.com/project/Flakebi/simplebot)
+
 This is a simple TeamSpeak chat bot. It connects as a usual client and responds to some messages. The bot originally was built to test and showcase the capabilities of the [tsclientlib](https://github.com/ReSpeak/tsclientlib) library, though it developed into a more sophisticated and usable bot.
 
 ## Dependencies
