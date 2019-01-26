@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use failure::{bail, format_err};
-use futures::sync::oneshot;
+use futures::sync::mpsc;
 use futures::{Future, Stream};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -266,14 +266,14 @@ fn main() -> Result<()> {
 			.log_udp_packets(args.verbose >= 3);
 	}
 
-	let (disconnect_send, disconnect_recv) = oneshot::channel();
+	let (disconnect_send, disconnect_recv) = mpsc::unbounded();
 	tokio::run(
 		futures::lazy(move || {
 			// Connect
 			Connection::new(con_config)
 		})
 		.and_then(|con| {
-			con.add_on_disconnect(Box::new(move || disconnect_send.send(()).unwrap()));
+			con.add_on_disconnect(Box::new(move || disconnect_send.unbounded_send(()).unwrap()));
 			// Listen to events
 			con.add_on_event("listener".into(), Box::new(move |c, e| {
 				let bot = bot.read();
@@ -300,7 +300,7 @@ fn main() -> Result<()> {
 		})
 		.map_err(|e| panic!("An error occurred {:?}", e))
 		// Also quit on disconnect event
-		.select(disconnect_recv.map_err(|_|
+		.select2(disconnect_recv.into_future().map_err(|_|
 			format_err!("Failed to receive disconnect")))
 		.map(|_| ())
 		.map_err(|_| panic!("An error occurred")),
