@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 
 use failure::{bail, format_err};
-use futures::{Future, Stream};
 use futures::sync::oneshot;
+use futures::{Future, Stream};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
-	ConnectionLock, ConnectOptions, Connection, DisconnectOptions, InvokerRef,
+	ConnectOptions, Connection, ConnectionLock, DisconnectOptions, InvokerRef,
 	MessageTarget, Reason,
 };
 
@@ -40,7 +40,11 @@ lazy_static! {
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
 	AppSettings::VersionlessSubcommands]"))]
 struct Args {
-	#[structopt(short = "s", long = "settings", help = "The path of the settings file")]
+	#[structopt(
+		short = "s",
+		long = "settings",
+		help = "The path of the settings file"
+	)]
 	settings: Option<String>,
 
 	#[structopt(
@@ -196,7 +200,10 @@ fn main() -> Result<()> {
 	let base_dir;
 	if let Some(settings) = &args.settings {
 		settings_path = PathBuf::from(settings.to_string());
-		base_dir = settings_path.parent().map(|p| p.into()).unwrap_or_else(PathBuf::new);
+		base_dir = settings_path
+			.parent()
+			.map(|p| p.into())
+			.unwrap_or_else(PathBuf::new);
 	} else {
 		let proj_dirs =
 			match directories::ProjectDirs::from("", "ReSpeak", "simple-bot") {
@@ -296,7 +303,7 @@ fn main() -> Result<()> {
 		.select(disconnect_recv.map_err(|_|
 			format_err!("Failed to receive disconnect")))
 		.map(|_| ())
-		.map_err(|_| panic!("An error occurred"))
+		.map_err(|_| panic!("An error occurred")),
 	);
 
 	Ok(())
@@ -305,12 +312,10 @@ fn main() -> Result<()> {
 fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 	// Reload settings
 	match fs::read_to_string(&bot.settings_path) {
-		Ok(r) => {
-			match toml::from_str(&r) {
-				Ok(s) => bot.settings = s,
-				Err(e) => bail!("Failed to parse settings: {}", e),
-			}
-		}
+		Ok(r) => match toml::from_str(&r) {
+			Ok(s) => bot.settings = s,
+			Err(e) => bail!("Failed to parse settings: {}", e),
+		},
 		Err(e) => {
 			// Only a soft error
 			warn!(bot.logger, "Failed to read settings, using defaults";
@@ -320,8 +325,9 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 
 	// Reload actions
 	let mut actions = ActionList::default();
-	if let Err(e) = crate::load_actions(&bot.base_dir, &mut actions,
-		&bot.settings.actions) {
+	if let Err(e) =
+		crate::load_actions(&bot.base_dir, &mut actions, &bot.settings.actions)
+	{
 		error!(bot.logger, "Failed to load actions"; "error" => %e);
 	}
 
@@ -343,15 +349,21 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 			ActionFile::default()
 		}
 	};
-	if let Err(e) = crate::load_actions(&bot.base_dir, &mut bot.actions,
-		&dynamic) {
+	if let Err(e) =
+		crate::load_actions(&bot.base_dir, &mut bot.actions, &dynamic)
+	{
 		bail!("Failed to load dynamic actions: {}", e);
 	}
 	debug!(bot.logger, "Loaded actions"; "actions" => ?bot.actions);
 	Ok(())
 }
 
-fn load_actions(base: &Path, actions: &mut ActionList, f: &ActionFile) -> Result<()> {
+fn load_actions(
+	base: &Path,
+	actions: &mut ActionList,
+	f: &ActionFile,
+) -> Result<()>
+{
 	for a in &f.on_message {
 		actions.0.push(a.to_action()?);
 	}
@@ -368,7 +380,11 @@ fn load_actions(base: &Path, actions: &mut ActionList, f: &ActionFile) -> Result
 fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 	for e in event {
 		match e {
-			Event::Message { from, invoker, message } => {
+			Event::Message {
+				from,
+				invoker,
+				message,
+			} => {
 				// Ignore messages from ourself
 				if invoker.id == con.own_client {
 					continue;
@@ -384,9 +400,14 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 				};
 				if let Some(response) = bot.actions.handle(bot, con, &msg) {
 					let logger = bot.logger.clone();
-					tokio::spawn(con.to_mut().send_message(*from, response.as_ref())
-						.map_err(move |e| error!(logger,
-							"Failed to send response"; "error" => ?e)));
+					tokio::spawn(
+						con.to_mut()
+							.send_message(*from, response.as_ref())
+							.map_err(move |e| {
+								error!(logger,
+							"Failed to send response"; "error" => ?e)
+							}),
+					);
 				}
 			}
 			_ => {}
@@ -394,6 +415,4 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 	}
 }
 
-fn escape_bb(s: &str) -> String {
-	s.replace('[', "\\[")
-}
+fn escape_bb(s: &str) -> String { s.replace('[', "\\[") }

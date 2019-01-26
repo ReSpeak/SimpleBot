@@ -49,7 +49,11 @@ pub enum Matcher {
 	Mode(Option<TextMessageTargetMode>),
 }
 
-type ReactionFunction = Box<for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>> + Send + Sync>;
+type ReactionFunction = Box<
+	for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
+		+ Send
+		+ Sync,
+>;
 pub enum Reaction {
 	Plain(String),
 	Command(String),
@@ -74,16 +78,30 @@ impl ActionDefinition {
 		let mut res = Action::default();
 		if let Some(contains) = &self.contains {
 			if let Some(matches) = &self.regex {
-				bail!("An action can only have either contains or matches. \
-					This one contains both ({} and {})", contains, matches);
+				bail!(
+					"An action can only have either contains or matches. This \
+					 one contains both ({} and {})",
+					contains,
+					matches
+				);
 			}
 			// Only match string at word boundaries
 			// Add \b only if the first/last character is alphabetix.
 			let mut regex = regex::escape(contains);
-			if regex.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+			if regex
+				.chars()
+				.next()
+				.map(|c| c.is_alphabetic())
+				.unwrap_or(false)
+			{
 				regex = format!(r"\b{}", regex);
 			}
-			if regex.chars().last().map(|c| c.is_alphabetic()).unwrap_or(false) {
+			if regex
+				.chars()
+				.last()
+				.map(|c| c.is_alphabetic())
+				.unwrap_or(false)
+			{
 				regex = format!(r"{}\b", regex);
 			}
 			res.matchers.push(Matcher::Regex(Regex::new(&regex)?));
@@ -97,8 +115,11 @@ impl ActionDefinition {
 				"channel" => Some(TextMessageTargetMode::Channel),
 				"client" => Some(TextMessageTargetMode::Client),
 				"poke" => None,
-				s => bail!("Chat mode must be server, channel, client or \
-					poke. '{}' is not allowed.", s),
+				s => bail!(
+					"Chat mode must be server, channel, client or poke. '{}' \
+					 is not allowed.",
+					s
+				),
 			};
 			res.matchers.push(Matcher::Mode(mode));
 		}
@@ -131,16 +152,36 @@ impl Matcher {
 		match self {
 			Matcher::Regex(r) => r.is_match(msg.message),
 			Matcher::Mode(m) => match m {
-				Some(TextMessageTargetMode::Server) =>
-					if let MessageTarget::Server = msg.from { true } else { false },
-				Some(TextMessageTargetMode::Channel) =>
-					if let MessageTarget::Channel = msg.from { true } else { false },
-				Some(TextMessageTargetMode::Client) =>
-					if let MessageTarget::Client(_) = msg.from { true } else { false },
+				Some(TextMessageTargetMode::Server) => {
+					if let MessageTarget::Server = msg.from {
+						true
+					} else {
+						false
+					}
+				}
+				Some(TextMessageTargetMode::Channel) => {
+					if let MessageTarget::Channel = msg.from {
+						true
+					} else {
+						false
+					}
+				}
+				Some(TextMessageTargetMode::Client) => {
+					if let MessageTarget::Client(_) = msg.from {
+						true
+					} else {
+						false
+					}
+				}
 				Some(TextMessageTargetMode::Unknown) => false,
-				None => if let MessageTarget::Poke(_) = msg.from { true }
-					else { false },
-			}
+				None => {
+					if let MessageTarget::Poke(_) = msg.from {
+						true
+					} else {
+						false
+					}
+				}
+			},
 		}
 	}
 }
@@ -160,18 +201,24 @@ impl Reaction {
 			Some(TextMessageTargetMode::Server) => "server",
 			Some(TextMessageTargetMode::Channel) => "channel",
 			Some(TextMessageTargetMode::Client) => "client",
-			Some(TextMessageTargetMode::Unknown) => panic!("Unknown TextMessageTargetMode"),
+			Some(TextMessageTargetMode::Unknown) => {
+				panic!("Unknown TextMessageTargetMode")
+			}
 			None => "poke",
 		}
 	}
 
 	/// If `None` is returned, the next action should be tested.
-	pub fn execute<'a>(&'a self, bot: &Bot, con: &ConnectionLock,
-		msg: &'a Message) -> Option<Cow<'a, str>> {
+	pub fn execute<'a>(
+		&'a self,
+		bot: &Bot,
+		con: &ConnectionLock,
+		msg: &'a Message,
+	) -> Option<Cow<'a, str>>
+	{
 		match self {
 			Reaction::Plain(s) => Some(Cow::Borrowed(s.as_str())),
-			Reaction::Command(s) |
-			Reaction::Shell(s) => {
+			Reaction::Command(s) | Reaction::Shell(s) => {
 				let output;
 				if let Reaction::Command(_) = self {
 					// Split arguments at spaces
@@ -258,8 +305,13 @@ impl Reaction {
 }
 
 impl ActionList {
-	pub fn handle<'a>(&'a self, bot: &Bot, con: &ConnectionLock,
-		msg: &'a Message) -> Option<Cow<'a, str>> {
+	pub fn handle<'a>(
+		&'a self,
+		bot: &Bot,
+		con: &ConnectionLock,
+		msg: &'a Message,
+	) -> Option<Cow<'a, str>>
+	{
 		'actions: for a in &self.0 {
 			for m in &a.matchers {
 				if !m.matches(msg) {

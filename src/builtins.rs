@@ -9,8 +9,8 @@ use regex::Regex;
 use slog::{debug, error, info};
 use tsclientlib::ConnectionLock;
 
-use crate::{ActionFile, Bot, Message};
 use crate::action::*;
+use crate::{ActionFile, Bot, Message};
 
 /// Add builtin functions to the end of the action list.
 pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
@@ -26,45 +26,68 @@ pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 	let list_regex = Regex::new(&format!("^{}list", p)).unwrap();
 	add_fun(bot, list_regex, move |b, _, m| list(b, &list_mutex, m));
 
-	let add_regex = Regex::new(&format!("^{}add",
-		p)).unwrap();
-	let long_add_regex = Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$",
-		p)).unwrap();
+	let add_regex = Regex::new(&format!("^{}add", p)).unwrap();
+	let long_add_regex =
+		Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$", p))
+			.unwrap();
 	let b = b2.clone();
-	add_fun(bot, add_regex, move |bot, _, m| add(&b, bot, &long_add_regex, m));
+	add_fun(bot, add_regex, move |bot, _, m| {
+		add(&b, bot, &long_add_regex, m)
+	});
 
-	let del_regex = Regex::new(&format!("^{}del",
-		p)).unwrap();
-	let long_del_regex = Regex::new(&format!("^{}del (?P<trigger>.*)$",
-		p)).unwrap();
+	let del_regex = Regex::new(&format!("^{}del", p)).unwrap();
+	let long_del_regex =
+		Regex::new(&format!("^{}del (?P<trigger>.*)$", p)).unwrap();
 	let b = b2.clone();
-	add_fun(bot, del_regex, move |bot, _, m| del(&b, bot, &long_del_regex, m));
+	add_fun(bot, del_regex, move |bot, _, m| {
+		del(&b, bot, &long_del_regex, m)
+	});
 
-	let reload_regex = Regex::new(&format!("^{}reload$", p))
-		.unwrap();
+	let reload_regex = Regex::new(&format!("^{}reload$", p)).unwrap();
 	add_fun(bot, reload_regex, move |_, _, _| {
 		reload(&b2);
 		Some("".into())
 	});
 
-	let quit_regex = Regex::new(&format!("^{}quit$", p))
-		.unwrap();
+	let quit_regex = Regex::new(&format!("^{}quit$", p)).unwrap();
 	add_fun(bot, quit_regex, move |b, c, m| quit(b, c, m));
 }
 
-fn add_fun<F: for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
-	+ Send + Sync + 'static>(bot: &mut Bot, r: Regex, f: F) {
+fn add_fun<
+	F: for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
+		+ Send
+		+ Sync
+		+ 'static,
+>(
+	bot: &mut Bot,
+	r: Regex,
+	f: F,
+)
+{
 	bot.actions.0.push(Action {
 		matchers: vec![Matcher::Regex(r)],
 		reaction: Some(Reaction::Function(Box::new(f))),
 	});
 }
 
-fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
+fn add<'a>(
+	bot: &Weak<RwLock<Bot>>,
+	b: &Bot,
+	r: &Regex,
+	msg: &'a Message,
+) -> Option<Cow<'a, str>>
+{
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
-		None => return Some(format!("Usage: {}add <response> on <trigger>",
-			crate::escape_bb(&b.settings.prefix)).into()),
+		None => {
+			return Some(
+				format!(
+					"Usage: {}add <response> on <trigger>",
+					crate::escape_bb(&b.settings.prefix)
+				)
+				.into(),
+			);
+		}
 	};
 	let response = caps.name("response").unwrap();
 	let trigger = caps.name("trigger").unwrap();
@@ -84,7 +107,7 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 					"error" => ?e);
 				return Some("Failed".into());
 			}
-		}
+		},
 		Err(e) => {
 			debug!(b.logger, "Dynamic actions not loaded"; "error" => %e);
 			ActionFile::default()
@@ -112,11 +135,24 @@ fn add<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 }
 
 /// Remove everything which matches this trigger.
-fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
+fn del<'a>(
+	bot: &Weak<RwLock<Bot>>,
+	b: &Bot,
+	r: &Regex,
+	msg: &'a Message,
+) -> Option<Cow<'a, str>>
+{
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
-		None => return Some(format!("Usage: {}del <trigger>",
-			crate::escape_bb(&b.settings.prefix)).into()),
+		None => {
+			return Some(
+				format!(
+					"Usage: {}del <trigger>",
+					crate::escape_bb(&b.settings.prefix)
+				)
+				.into(),
+			);
+		}
 	};
 	let trigger = caps.name("trigger").unwrap().as_str();
 
@@ -135,7 +171,7 @@ fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 					"error" => ?e);
 				return Some("Failed".into());
 			}
-		}
+		},
 		Err(e) => {
 			debug!(b.logger, "Dynamic actions not loaded"; "error" => %e);
 			ActionFile::default()
@@ -168,7 +204,7 @@ fn del<'a>(bot: &Weak<RwLock<Bot>>, b: &Bot, r: &Regex, msg: &'a Message) -> Opt
 fn reload(b: &Weak<RwLock<Bot>>) {
 	if let Some(b2) = b.upgrade() {
 		let b = b.clone();
-		tokio::spawn(future::lazy(move ||{
+		tokio::spawn(future::lazy(move || {
 			let mut bot = b2.write();
 
 			match crate::load_settings(b, &mut bot) {
@@ -180,7 +216,12 @@ fn reload(b: &Weak<RwLock<Bot>>) {
 	}
 }
 
-fn quit<'a>(bot: &Bot, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a, str>> {
+fn quit<'a>(
+	bot: &Bot,
+	con: &ConnectionLock,
+	msg: &'a Message,
+) -> Option<Cow<'a, str>>
+{
 	info!(bot.logger, "Leaving on request"; "message" => ?msg);
 	// We get no disconnect message here
 	tokio::spawn(con.to_mut().remove()
@@ -189,27 +230,40 @@ fn quit<'a>(bot: &Bot, con: &ConnectionLock, msg: &'a Message) -> Option<Cow<'a,
 	Some("".into())
 }
 
+#[rustfmt::skip]
 fn help<'a>(bot: &Bot) -> Option<Cow<'a, str>> {
-	Some(format!("This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
-		Use [i]{prefix}add <reaction> on <trigger>[/i] to add new actions\n\
-		or [i]{prefix}del <trigger>[/i] to remove them.\n\
-		[i]{prefix}list[/i] lists all commands and actions.\n\
-		[i]{prefix}quit[/i] disconnects the bot.",
-		prefix = crate::escape_bb(&bot.settings.prefix)).into())
+	Some(
+		format!(
+			"This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
+			Use [i]{prefix}add <reaction> on <trigger>[/i] to add new actions\n\
+			or [i]{prefix}del <trigger>[/i] to remove them.\n\
+			[i]{prefix}list[/i] lists all commands and actions.\n\
+			[i]{prefix}quit[/i] disconnects the bot.",
+			prefix = crate::escape_bb(&bot.settings.prefix)
+		)
+		.into(),
+	)
 }
 
 /// Please do not remove this message. It serves the purpose of license and
 /// copyright notice, which is required by the MIT and Apache license.
+#[rustfmt::skip]
 fn copyright() -> Option<Cow<'static, str>> {
-	Some("This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
+	Some(
+		"This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
 		This software is licensed under MIT and Apache License, Version 2.0.\n\
 		See the website for more information.\n\
-		© 2018–2019 Flakebi".into())
+		© 2018–2019 Flakebi".into(),
+	)
 }
 
 type ListPages = Vec<String>;
-fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
-	-> Option<Cow<'a, str>> {
+fn list<'a>(
+	bot: &Bot,
+	list: &Mutex<Option<ListPages>>,
+	msg: &Message,
+) -> Option<Cow<'a, str>>
+{
 	let mut list = list.lock();
 	if list.is_none() {
 		let mut matchers = Vec::new();
@@ -226,8 +280,10 @@ fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
 						r = r.replace("\\.", ".");
 						res.push_str(&r);
 					}
-					Matcher::Mode(m) => res.push_str(&format!(" (only in {} mode)",
-						Reaction::get_mode(m))),
+					Matcher::Mode(m) => res.push_str(&format!(
+						" (only in {} mode)",
+						Reaction::get_mode(m)
+					)),
 				}
 			}
 			matchers.push(res);
@@ -254,7 +310,7 @@ fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
 
 	let mut page = 0;
 	if let Some(i) = msg.message.rfind(' ') {
-		if let Ok(n) = (msg.message[i+1..]).parse::<usize>() {
+		if let Ok(n) = (msg.message[i + 1..]).parse::<usize>() {
 			if n != 0 {
 				// Start indexing at 1
 				page = n - 1;
@@ -268,11 +324,12 @@ fn list<'a>(bot: &Bot, list: &Mutex<Option<ListPages>>, msg: &Message)
 
 	let page_s = list[page].clone();
 	let res = if list.len() > 1 {
-		format!("Page {}/{}, use [i]{}list <page>[/i] to show more.{}",
+		format!(
+			"Page {}/{}, use [i]{}list <page>[/i] to show more.{}",
 			page + 1,
 			list.len(),
 			crate::escape_bb(&bot.settings.prefix),
-			page_s,//crate::escape_bb(&page_s),
+			page_s, //crate::escape_bb(&page_s),
 		)
 	} else {
 		page_s
