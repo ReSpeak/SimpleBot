@@ -9,7 +9,7 @@ This is a simple TeamSpeak chat bot. It connects as a usual client and responds 
 Use a settings file with `./simple-bot --settings settings.toml` or put it in the configuration directory of your system, which should be
 
 - Linux: `.config/simple-bot/`
-- Windows: `RoamingAppData/ReSpeak/simple-bot/config/`
+- Windows: `%APPDATA%/ReSpeak/simple-bot/config/`
 - macOS: `Library/Preferences/ReSpeak.simple-bot/`
 
 ## Features
