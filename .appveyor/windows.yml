@@ -11,7 +11,7 @@ branches:
 
 environment:
   UPLOAD_TOKEN:
-    secure: 1fBPV3qxD8t9jQykTuKqP4lgAKC7LG/HeaUw0pbwTibCRBK1ZuBsASou6dzfUatiePfJNtQCQLLkUQpoMhlLtf0jZc0h2Qux44/WjG5E2LY=
+    secure: 8GZ0hTW+Z5v2qPUgsqFehWQ+osbocNYWRQybTihov35i7QCi+aiRDCI4Xl7ULOszCZzHCFNcL364TxpaCloiOhHCtQEsN3BwypfRll8Q6Ck=
   global:
     CHANNEL: stable
     TARGET: x86_64-pc-windows-msvc

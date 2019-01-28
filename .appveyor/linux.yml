@@ -12,7 +12,7 @@ branches:
 environment:
   PATH: /home/appveyor/.rvm/gems/ruby-2.0.0-p648/bin:/home/appveyor/.rvm/gems/ruby-2.0.0-p648@global/bin:/home/appveyor/.rvm/rubies/ruby-2.0.0-p648/bin:/usr/lib/jvm/java-9-openjdk-amd64/bin:/home/appveyor/.gvm/bin:/home/appveyor/.gvm/bin:/home/appveyor/.nvm/versions/node/v4.9.1/bin:/opt/appveyor/build-agent:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/appveyor/.dotnet/tools:/home/appveyor/.rvm/bin:/home/appveyor/.rvm/bin:/opt/mssql-tools/bin:/home/appveyor/.cargo/bin
   UPLOAD_TOKEN:
-    secure: 1fBPV3qxD8t9jQykTuKqP4lgAKC7LG/HeaUw0pbwTibCRBK1ZuBsASou6dzfUatiePfJNtQCQLLkUQpoMhlLtf0jZc0h2Qux44/WjG5E2LY=
+    secure: 8GZ0hTW+Z5v2qPUgsqFehWQ+osbocNYWRQybTihov35i7QCi+aiRDCI4Xl7ULOszCZzHCFNcL364TxpaCloiOhHCtQEsN3BwypfRll8Q6Ck=
 
 cache:
 - /home/appveyor/.cargo
