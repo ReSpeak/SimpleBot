@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 
 use failure::{bail, format_err};
 use futures::sync::mpsc;
 use futures::{Future, Stream};
 use lazy_static::lazy_static;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use slog::{debug, error, o, warn, Drain, Logger};
 use structopt::clap::AppSettings;
@@ -123,6 +124,14 @@ pub struct Settings {
 	/// `Disconnecting`
 	#[serde(default = "default_disconnect_message")]
 	disconnect_message: String,
+	/// How many messages can be sent per second.
+	///
+	/// If this limit is exceeded, incoming messages will be ignored.
+	///
+	/// # Default
+	/// `2`
+	#[serde(default = "default_rate_limit")]
+	rate_limit: u8,
 
 	/// The prefix for builtin commands.
 	///
@@ -142,6 +151,7 @@ pub struct Bot {
 	settings_path: PathBuf,
 	actions: ActionList,
 	settings: Settings,
+	rate_limiting: Mutex<Vec<Instant>>,
 }
 
 #[derive(Clone, Debug)]
@@ -160,6 +170,7 @@ impl Default for Bot {
 			settings_path: PathBuf::new(),
 			actions: Default::default(),
 			settings: Default::default(),
+			rate_limiting: Default::default(),
 		}
 	}
 }
@@ -174,6 +185,7 @@ impl Default for Settings {
 			channel: None,
 			name: default_name(),
 			disconnect_message: default_disconnect_message(),
+			rate_limit: default_rate_limit(),
 			prefix: default_prefix(),
 
 			actions: Default::default(),
@@ -186,6 +198,7 @@ fn default_key_file() -> String { "private.key".into() }
 fn default_address() -> String { "localhost".into() }
 fn default_name() -> String { "SimpleBot".into() }
 fn default_disconnect_message() -> String { "Disconnecting".into() }
+fn default_rate_limit() -> u8 { 2 }
 fn default_prefix() -> String { ".".into() }
 fn default_dynamic_actions() -> String { "dynamic.toml".into() }
 
@@ -389,6 +402,22 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 				if invoker.id == con.own_client {
 					continue;
 				}
+				// Check rate limiting
+				{
+					let mut rate = bot.rate_limiting.lock();
+					let now = Instant::now();
+					let second = Duration::from_secs(1);
+					rate.retain(|i| now.duration_since(*i) <= second);
+					if rate.len() >= bot.settings.rate_limit as usize {
+						warn!(bot.logger, "Ignored message because of rate \
+							limiting";
+							"from" => ?from,
+							"invoker" => ?invoker,
+							"message" => message,
+						);
+						continue;
+					}
+				}
 
 				debug!(bot.logger, "Got message"; "from" => ?from,
 					"invoker" => ?invoker, "message" => message);
@@ -399,6 +428,10 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 					message,
 				};
 				if let Some(response) = bot.actions.handle(bot, con, &msg) {
+					{
+						let mut rate = bot.rate_limiting.lock();
+						rate.push(Instant::now());
+					}
 					let logger = bot.logger.clone();
 					tokio::spawn(
 						con.to_mut()

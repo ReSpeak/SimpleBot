@@ -1,4 +1,4 @@
-# SimpleBot [![Build status](https://ci.appveyor.com/api/projects/status/818yy7sak28p1uv9?svg=true)](https://ci.appveyor.com/project/Flakebi/simplebot)
+# SimpleBot [![Build status](https://ci.appveyor.com/api/projects/status/p2og3vtd60boblbw/branch/master?svg=true)](https://ci.appveyor.com/project/Flakebi/simplebot/branch/master)
 
 This is a simple TeamSpeak chat bot. It connects as a usual client and responds to some messages. The bot originally was built to test and showcase the capabilities of the [tsclientlib](https://github.com/ReSpeak/tsclientlib) library, though it developed into a more sophisticated and usable bot.
 
@@ -51,6 +51,8 @@ The bot supports a simple configuration in a `settings.toml` file. The default o
 address = "localhost"
 # The name of the bot
 name = "SimpleBot"
+# How many responses can be sent per second
+rate_limit = 2
 # The prefix for builtin commands
 prefix = "."
 

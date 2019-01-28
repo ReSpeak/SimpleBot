@@ -1,0 +1,46 @@
+version: 0.1.{build}
+image: Visual Studio 2017
+platform: x64
+clone_depth: 1
+branches:
+  only:
+  # Release tags
+  - /^v\d+\.\d+\.\d+.*$/
+  - master
+  - develop
+
+environment:
+  UPLOAD_TOKEN:
+    secure: 1fBPV3qxD8t9jQykTuKqP4lgAKC7LG/HeaUw0pbwTibCRBK1ZuBsASou6dzfUatiePfJNtQCQLLkUQpoMhlLtf0jZc0h2Qux44/WjG5E2LY=
+  global:
+    CHANNEL: stable
+    TARGET: x86_64-pc-windows-msvc
+
+cache:
+- C:\Users\appveyor\.cargo\registry
+- target
+
+install:
+- ps: >-
+    $Env:PATH += ';C:\msys64\usr\bin'
+- curl -sSf -o rustup-init.exe https://win.rustup.rs/
+- rustup-init.exe -y --default-host %TARGET% --default-toolchain %CHANNEL%
+- set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
+- rustc -Vv
+- cargo -V
+
+build_script:
+- cargo check
+- cargo build --release
+
+test_script:
+- cargo test
+
+# TODO Deploy with openssl
+deploy_script:
+- ps: >-
+    if(${env:UPLOAD_TOKEN}) {
+      cd([io.path]::combine("${env:APPVEYOR_BUILD_FOLDER}", "target", "release"))
+      Compress-Archive -Path .\simple-bot -DestinationPath SimpleBot.zip
+      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_windows?token=${env:UPLOAD_TOKEN}&filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip" } -Method Put -InFile .\SimpleBot.zip
+    }
