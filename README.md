@@ -6,6 +6,8 @@ This is a simple TeamSpeak chat bot. It connects as a usual client and responds 
 - [OpenSSL](https://www.openssl.org) 1.1
 - [Rust](https://rust-lang.org) (only needed if you want to compile the bot yourself, the preferred installation method is [rustup](https://rustup.rs)), currently the nightly version is needed
 
+Binary downloads of SimpleBot can be found [here](https://splamy.de/Nightly).
+
 ## Usage
 Use a settings file with `./simple-bot --settings settings.toml` or put it in the configuration directory of your system, which should be
 
