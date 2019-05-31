@@ -12,7 +12,7 @@ branches:
 
 environment:
   UPLOAD_TOKEN:
-    secure: 8GZ0hTW+Z5v2qPUgsqFehWQ+osbocNYWRQybTihov35i7QCi+aiRDCI4Xl7ULOszCZzHCFNcL364TxpaCloiOhHCtQEsN3BwypfRll8Q6Ck=
+    secure: A8qR1te5wOhuRo3hrlfcGF6hnBuudYiA8kusdZJQhj8=
   global:
     CHANNEL: stable
     TARGET: x86_64-pc-windows-msvc
