@@ -7,6 +7,9 @@ edition = "2018"
 [[bin]]
 name = "simple-bot"
 
+[profile.release]
+debug = true
+
 [dependencies]
 directories = "1"
 failure = "0.1"

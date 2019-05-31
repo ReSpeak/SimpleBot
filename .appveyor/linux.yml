@@ -35,5 +35,5 @@ deploy_script:
     if(${env:UPLOAD_TOKEN}) {
       cd /home/appveyor/projects/simplebot/target/release/
       Compress-Archive -Path ./simple-bot -DestinationPath SimpleBot.zip
-      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_linux?token=${env:UPLOAD_TOKEN}&filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip" } -Method Put -InFile ./SimpleBot.zip
+      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_linux?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
     }

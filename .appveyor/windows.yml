@@ -23,7 +23,6 @@ cache:
 
 install:
 - ps: $Env:PATH += ';C:\msys64\usr\bin'
-- ps: $Env:OPENSSL_DIR = 'C:\OpenSSL-v111-Win64'
 - curl -sSf -o rustup-init.exe https://win.rustup.rs/
 - rustup-init.exe -y --default-host %TARGET% --default-toolchain %CHANNEL%
 - set PATH=%PATH%;C:\Users\appveyor\.cargo\bin
@@ -41,7 +40,6 @@ deploy_script:
 - ps: >-
     if(${env:UPLOAD_TOKEN}) {
       cd([io.path]::combine("${env:APPVEYOR_BUILD_FOLDER}", "target", "release"))
-      Copy-Item ${env:OPENSSL_DIR}\bin\*.dll .\
-      Compress-Archive -Path simple-bot.exe,libcrypto-1_1-x64.dll,libssl-1_1-x64.dll -DestinationPath SimpleBot.zip
-      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_windows?token=${env:UPLOAD_TOKEN}&filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip" } -Method Put -InFile .\SimpleBot.zip
+      Compress-Archive -Path simple-bot.exe -DestinationPath SimpleBot.zip
+      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_windows?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
     }

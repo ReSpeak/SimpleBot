@@ -3,7 +3,7 @@
 This is a simple TeamSpeak chat bot. It connects as a usual client and responds to some messages. The bot originally was built to test and showcase the capabilities of the [tsclientlib](https://github.com/ReSpeak/tsclientlib) library, though it developed into a more sophisticated and usable bot.
 
 ## Dependencies
-- [OpenSSL](https://www.openssl.org) 1.1
+- [OpenSSL](https://www.openssl.org) 1.1 (not needed on windows)
 - [Rust](https://rust-lang.org) (only needed if you want to compile the bot yourself, the preferred installation method is [rustup](https://rustup.rs)), currently the nightly version is needed
 
 Binary downloads of SimpleBot can be found [here](https://splamy.de/Nightly).

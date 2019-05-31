@@ -311,6 +311,7 @@ fn main() -> Result<()> {
 					.message(disconnect_message),
 			)
 		})
+		// TODO Don't panic here, just print an error
 		.map_err(|e| panic!("An error occurred {:?}", e))
 		// Also quit on disconnect event
 		.select2(disconnect_recv.into_future().map_err(|_|
