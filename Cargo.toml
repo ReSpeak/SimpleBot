@@ -1,6 +1,6 @@
 [package]
 name = "simple-bot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 edition = "2018"
 
@@ -11,24 +11,22 @@ name = "simple-bot"
 debug = true
 
 [dependencies]
-directories = "1"
-failure = "0.1"
-futures = "0.1"
-lazy_static = "1"
-parking_lot = "0.7"
+anyhow = "1"
+base64 = "0.12"
+directories = "2"
+futures = "0.3"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 slog-async = "2"
-slog-perf = "0.2"
+slog-envlogger = "2"
 slog-term = "2"
-structopt = "0.2"
-tokio = "0.1"
-tokio-signal = "0.2"
+structopt = { version = "0.3", default-features = false }
+tokio = { version = "0.2", features = ["macros", "rt-core", "signal"] }
 toml = "0.4"
-tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib" }
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", branch = "develop", default-features = false }
 # TODO Needed to load the private key
-tsproto = { git = "https://github.com/ReSpeak/tsclientlib" }
+tsproto = { git = "https://github.com/ReSpeak/tsclientlib", branch = "develop" }
 
 [dependencies.slog]
 version = "2"
-features = ["max_level_debug", "release_max_level_debug"]
+features = ["max_level_trace", "release_max_level_debug"]

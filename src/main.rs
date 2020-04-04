@@ -1,59 +1,35 @@
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-use failure::{bail, format_err};
-use futures::sync::mpsc;
-use futures::{Future, Stream};
-use lazy_static::lazy_static;
-use parking_lot::{Mutex, RwLock};
+use anyhow::{bail, Result};
+use futures::prelude::*;
 use serde::{Deserialize, Serialize};
-use slog::{debug, error, o, warn, Drain, Logger};
-use structopt::clap::AppSettings;
+use slog::{debug, error, info, o, warn, Drain, Logger};
 use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
-	ConnectOptions, Connection, ConnectionLock, DisconnectOptions, InvokerRef,
-	MessageTarget, Reason,
+	facades, ConnectOptions, Connection, DisconnectOptions, InvokerRef,
+	MessageTarget, Reason, StreamItem,
 };
+use tsproto::Identity;
 
 const SETTINGS_FILENAME: &str = "settings.toml";
-
-type Result<T> = std::result::Result<T, failure::Error>;
 
 pub mod action;
 pub mod builtins;
 
 use crate::action::{ActionDefinition, ActionList};
 
-lazy_static! {
-	static ref LOGGER: Logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
-
-		Logger::root(drain, o!())
-	};
-}
-
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
 struct Args {
-	#[structopt(
-		short = "s",
-		long = "settings",
-		help = "The path of the settings file"
-	)]
+	/// The path of the settings file.
+	#[structopt(short, long)]
 	settings: Option<String>,
 
-	#[structopt(
-		short = "v",
-		long = "verbose",
-		help = "Print the content of all packets",
-		parse(from_occurrences)
-	)]
+	/// Print the content of all packets.
+	#[structopt(short, long, parse(from_occurrences))]
 	verbose: u8,
 	// 0. Print nothing
 	// 1. Print command string
@@ -151,26 +127,30 @@ pub struct Bot {
 	settings_path: PathBuf,
 	actions: ActionList,
 	settings: Settings,
-	rate_limiting: Mutex<Vec<Instant>>,
+	rate_limiting: Vec<Instant>,
+	/// A cached list of actions
+	list: Vec<String>,
+	should_reload: Cell<bool>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Message<'a> {
-	/// If this is `None`, it means poke.
-	from: MessageTarget,
+	target: MessageTarget,
 	invoker: InvokerRef<'a>,
 	message: &'a str,
 }
 
-impl Default for Bot {
-	fn default() -> Self {
+impl Bot {
+	fn new(logger: Logger) -> Self {
 		Self {
-			logger: LOGGER.clone(),
+			logger,
 			base_dir: PathBuf::new(),
 			settings_path: PathBuf::new(),
 			actions: Default::default(),
 			settings: Default::default(),
 			rate_limiting: Default::default(),
+			list: Default::default(),
+			should_reload: Default::default(),
 		}
 	}
 }
@@ -202,11 +182,21 @@ fn default_rate_limit() -> u8 { 2 }
 fn default_prefix() -> String { ".".into() }
 fn default_dynamic_actions() -> String { "dynamic.toml".into() }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> { real_main().await }
+
+async fn real_main() -> Result<()> {
+	let logger = {
+		let decorator = slog_term::TermDecorator::new().build();
+		let drain = slog_term::CompactFormat::new(decorator).build();
+		let drain = slog_envlogger::new(drain).fuse();
+		let drain = slog_async::Async::new(drain).build().fuse();
+
+		slog::Logger::root(drain, o!())
+	};
+
 	// Parse command line options
 	let args = Args::from_args();
-
-	let logger = LOGGER.clone();
 
 	// Load settings
 	let settings_path;
@@ -229,101 +219,103 @@ fn main() -> Result<()> {
 		settings_path = base_dir.join(SETTINGS_FILENAME);
 	}
 
-	let mut bot = Bot::default();
+	let mut bot = Bot::new(logger.clone());
 	bot.base_dir = base_dir;
 	bot.settings_path = settings_path;
-	let bot = Arc::new(RwLock::new(bot));
 	let private_key;
 	let disconnect_message;
 	let con_config;
-	{
-		let mut b = bot.write();
-		load_settings(Arc::downgrade(&bot), &mut *b)?;
-		disconnect_message = b.settings.disconnect_message.clone();
+	load_settings(&mut bot)?;
+	disconnect_message = bot.settings.disconnect_message.clone();
 
-		// Load private key
-		let file = Path::new(&b.settings.key_file);
-		let file = if file.is_absolute() {
-			file.to_path_buf()
-		} else {
-			b.base_dir.join(&b.settings.key_file)
-		};
-		private_key = match fs::read(&file) {
-			Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
-			_ => {
-				// Create new key
-				let key = tsproto::crypto::EccKeyPrivP256::create()?;
+	// Load private key
+	let file = Path::new(&bot.settings.key_file);
+	let file = if file.is_absolute() {
+		file.to_path_buf()
+	} else {
+		bot.base_dir.join(&bot.settings.key_file)
+	};
+	private_key = match fs::read(&file) {
+		Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
+		_ => {
+			// Create new key
+			let key = tsproto::crypto::EccKeyPrivP256::create()?;
 
-				// Create directory
-				if let Err(e) = fs::create_dir_all(&b.base_dir) {
-					error!(logger, "Failed to create config dictionary"; "error" => ?e);
-				}
-				// Write to file
-				if let Err(e) = fs::write(&file, &key.to_short()) {
-					warn!(logger, "Failed to store the private key, the server \
-						identity will not be the same in the next run";
-						"file" => ?file.to_str(),
-						"error" => ?e);
-				}
-
-				key
+			// Create directory
+			if let Err(e) = fs::create_dir_all(&bot.base_dir) {
+				error!(logger, "Failed to create config dictionary"; "error" => ?e);
 			}
-		};
+			// Write to file
+			if let Err(e) = fs::write(&file, &key.to_short()) {
+				warn!(logger, "Failed to store the private key, the server \
+					identity will not be the same in the next run";
+					"file" => ?file.to_str(),
+					"error" => ?e);
+			}
 
-		con_config = ConnectOptions::new(b.settings.address.clone())
-			.private_key(private_key)
-			.name(b.settings.name.clone())
-			.logger(logger.clone())
-			.log_commands(args.verbose >= 1)
-			.log_packets(args.verbose >= 2)
-			.log_udp_packets(args.verbose >= 3);
+			key
+		}
+	};
+	let identity = Identity::new(private_key, 0);
+
+	con_config = ConnectOptions::new(bot.settings.address.clone())
+		.identity(identity)
+		.name(bot.settings.name.clone())
+		.logger(logger.clone())
+		.log_commands(args.verbose >= 1)
+		.log_packets(args.verbose >= 2)
+		.log_udp_packets(args.verbose >= 3);
+
+	// Connect
+	let mut con= Connection::new(con_config)?;
+	let r = con
+		.events()
+		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+		.next()
+		.await;
+	if let Some(r) = r {
+		r?;
 	}
 
-	let (disconnect_send, disconnect_recv) = mpsc::unbounded();
-	tokio::run(
-		futures::lazy(move || {
-			// Connect
-			Connection::new(con_config)
-		})
-		.and_then(|con| {
-			con.add_on_disconnect(Box::new(move || disconnect_send.unbounded_send(()).unwrap()));
-			// Listen to events
-			con.add_on_event("listener".into(), Box::new(move |c, e| {
-				let bot = bot.read();
-				handle_event(&*bot, c, e)
-			}));
-
-			Ok(con)
-		})
-		.and_then(|con| {
+	loop {
+		let mut events = con.events();
+		tokio::select! {
 			// Wait for ctrl + c
-			let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
-			ctrl_c
-				.into_future()
-				.map_err(|_| format_err!("Failed to wait for ctrl + c").into())
-				.map(move |_| con)
-		})
-		.and_then(|con| {
-			// Disconnect
-			con.disconnect(
-				DisconnectOptions::new()
-					.reason(Reason::Clientdisconnect)
-					.message(disconnect_message),
-			)
-		})
-		// TODO Don't panic here, just print an error
-		.map_err(|e| panic!("An error occurred {:?}", e))
-		// Also quit on disconnect event
-		.select2(disconnect_recv.into_future().map_err(|_|
-			format_err!("Failed to receive disconnect")))
-		.map(|_| ())
-		.map_err(|_| panic!("An error occurred")),
-	);
+			_ = tokio::signal::ctrl_c() => { break; }
+			// Listen to events
+			e = events.next() => {
+				drop(events);
+				if let Some(e) = e {
+					if let StreamItem::ConEvents(e) = e? {
+						let mut state = con.get_mut_state()?;
+						handle_event(&mut bot, &mut state, &e);
+						if bot.should_reload.get() {
+							bot.should_reload.set(false);
+							match load_settings(&mut bot) {
+								Ok(()) => info!(bot.logger, "Reloaded successfully"),
+								Err(e) => error!(bot.logger, "Failed to reload"; "error" => ?e),
+							}
+						}
+					}
+				} else {
+					break;
+				}
+			}
+		}
+	}
+
+	// Disconnect
+	con.disconnect(
+		DisconnectOptions::new()
+			.reason(Reason::Clientdisconnect)
+			.message(disconnect_message),
+	)?;
+	con.events().for_each(|_| future::ready(())).await;
 
 	Ok(())
 }
 
-fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
+fn load_settings(bot: &mut Bot) -> Result<()> {
 	// Reload settings
 	match fs::read_to_string(&bot.settings_path) {
 		Ok(r) => match toml::from_str(&r) {
@@ -340,14 +332,14 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 	// Reload actions
 	let mut actions = ActionList::default();
 	if let Err(e) =
-		crate::load_actions(&bot.base_dir, &mut actions, &bot.settings.actions)
+		load_actions(&bot.base_dir, &mut actions, &bot.settings.actions)
 	{
 		error!(bot.logger, "Failed to load actions"; "error" => %e);
 	}
 
 	// Load builtins here, otherwise .del will never trigger
 	bot.actions = actions;
-	builtins::init(b2, bot);
+	builtins::init(bot);
 
 	// Dynamic actions
 	let path = Path::new(&bot.settings.dynamic_actions);
@@ -363,11 +355,10 @@ fn load_settings(b2: Weak<RwLock<Bot>>, bot: &mut Bot) -> Result<()> {
 			ActionFile::default()
 		}
 	};
-	if let Err(e) =
-		crate::load_actions(&bot.base_dir, &mut bot.actions, &dynamic)
-	{
+	if let Err(e) = load_actions(&bot.base_dir, &mut bot.actions, &dynamic) {
 		bail!("Failed to load dynamic actions: {}", e);
 	}
+	builtins::init_list(bot);
 	debug!(bot.logger, "Loaded actions"; "actions" => ?bot.actions);
 	Ok(())
 }
@@ -391,11 +382,11 @@ fn load_actions(
 	Ok(())
 }
 
-fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
+fn handle_event(bot: &mut Bot, con: &mut facades::ConnectionMut, event: &[Event]) {
 	for e in event {
 		match e {
 			Event::Message {
-				from,
+				target,
 				invoker,
 				message,
 			} => {
@@ -405,14 +396,14 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 				}
 				// Check rate limiting
 				{
-					let mut rate = bot.rate_limiting.lock();
+					let rate = &mut bot.rate_limiting;
 					let now = Instant::now();
 					let second = Duration::from_secs(1);
 					rate.retain(|i| now.duration_since(*i) <= second);
 					if rate.len() >= bot.settings.rate_limit as usize {
 						warn!(bot.logger, "Ignored message because of rate \
 							limiting";
-							"from" => ?from,
+							"target" => ?target,
 							"invoker" => ?invoker,
 							"message" => message,
 						);
@@ -420,28 +411,19 @@ fn handle_event(bot: &Bot, con: &ConnectionLock, event: &[Event]) {
 					}
 				}
 
-				debug!(bot.logger, "Got message"; "from" => ?from,
+				debug!(bot.logger, "Got message"; "target" => ?target,
 					"invoker" => ?invoker, "message" => message);
 
 				let msg = Message {
-					from: *from,
+					target: *target,
 					invoker: invoker.as_ref(),
 					message,
 				};
 				if let Some(response) = bot.actions.handle(bot, con, &msg) {
-					{
-						let mut rate = bot.rate_limiting.lock();
-						rate.push(Instant::now());
+					bot.rate_limiting.push(Instant::now());
+					if let Err(e) = con.send_message(*target, response.as_ref()) {
+						error!(bot.logger, "Failed to send response"; "error" => ?e)
 					}
-					let logger = bot.logger.clone();
-					tokio::spawn(
-						con.to_mut()
-							.send_message(*from, response.as_ref())
-							.map_err(move |e| {
-								error!(logger,
-							"Failed to send response"; "error" => ?e)
-							}),
-					);
 				}
 			}
 			_ => {}

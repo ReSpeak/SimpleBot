@@ -2,13 +2,14 @@ use std::borrow::Cow;
 use std::fmt;
 use std::process::Command;
 
-use failure::bail;
+use anyhow::{bail, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use slog::error;
-use tsclientlib::{ConnectionLock, MessageTarget, TextMessageTargetMode};
+use tsclientlib::{MessageTarget, TextMessageTargetMode};
+use tsclientlib::facades::ConnectionMut;
 
-use crate::{Bot, Message, Result};
+use crate::{Bot, Message};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +51,7 @@ pub enum Matcher {
 }
 
 type ReactionFunction = Box<
-	for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
+	dyn for<'a> Fn(&Bot, &mut ConnectionMut, &'a Message) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync,
 >;
@@ -153,21 +154,21 @@ impl Matcher {
 			Matcher::Regex(r) => r.is_match(msg.message),
 			Matcher::Mode(m) => match m {
 				Some(TextMessageTargetMode::Server) => {
-					if let MessageTarget::Server = msg.from {
+					if let MessageTarget::Server = msg.target {
 						true
 					} else {
 						false
 					}
 				}
 				Some(TextMessageTargetMode::Channel) => {
-					if let MessageTarget::Channel = msg.from {
+					if let MessageTarget::Channel = msg.target {
 						true
 					} else {
 						false
 					}
 				}
 				Some(TextMessageTargetMode::Client) => {
-					if let MessageTarget::Client(_) = msg.from {
+					if let MessageTarget::Client(_) = msg.target {
 						true
 					} else {
 						false
@@ -175,7 +176,7 @@ impl Matcher {
 				}
 				Some(TextMessageTargetMode::Unknown) => false,
 				None => {
-					if let MessageTarget::Poke(_) = msg.from {
+					if let MessageTarget::Poke(_) = msg.target {
 						true
 					} else {
 						false
@@ -212,7 +213,7 @@ impl Reaction {
 	pub fn execute<'a>(
 		&'a self,
 		bot: &Bot,
-		con: &ConnectionLock,
+		con: &mut ConnectionMut,
 		msg: &'a Message,
 	) -> Option<Cow<'a, str>>
 	{
@@ -226,11 +227,11 @@ impl Reaction {
 					let mut cmd = Command::new(split.next().unwrap());
 					cmd.args(split)
 						// Arguments
-						.arg(Self::get_target(&msg.from))
+						.arg(Self::get_target(&msg.target))
 						.arg(&msg.message)
 						.arg(msg.invoker.name);
 					if let Some(uid) = &msg.invoker.uid {
-						cmd.arg(uid.0);
+						cmd.arg(&base64::encode(&uid.0));
 					}
 					output = cmd.output();
 				} else {
@@ -244,28 +245,28 @@ impl Reaction {
 							// Program name
 							.arg("sh")
 							// Arguments
-							.arg(Self::get_target(&msg.from))
+							.arg(Self::get_target(&msg.target))
 							.arg(&msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
-							cmd.arg(uid.0);
+							cmd.arg(&base64::encode(&uid.0));
 						}
 						output = cmd.output();
 					}
 
 					#[cfg(not(target_family = "unix"))]
 					{
-						// TODO Look up how to use this on windows
+						// Windows is untested
 						let mut cmd = Command::new("cmd");
 						cmd
 							.arg("/C")
 							.arg(s)
 							// Arguments
-							.arg(Self::get_target(&msg.from))
+							.arg(Self::get_target(&msg.target))
 							.arg(&msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
-							cmd.arg(uid.0);
+							cmd.arg(&base64::encode(&uid.0));
 						}
 						output = cmd.output();
 					}
@@ -274,7 +275,7 @@ impl Reaction {
 				let output = match output {
 					Ok(o) => o,
 					Err(e) => {
-						error!(crate::LOGGER, "Failed to execute shell";
+						error!(bot.logger, "Failed to execute shell";
 							"command" => s, "error" => ?e);
 						// Don't proceed
 						return Some("".into());
@@ -289,7 +290,7 @@ impl Reaction {
 				let res = match std::str::from_utf8(&output.stdout) {
 					Ok(r) => r,
 					Err(e) => {
-						error!(crate::LOGGER, "Failed to parse output";
+						error!(bot.logger, "Failed to parse output";
 							"command" => s, "error" => ?e,
 							"output" => ?output.stdout);
 						// Don't proceed
@@ -308,7 +309,7 @@ impl ActionList {
 	pub fn handle<'a>(
 		&'a self,
 		bot: &Bot,
-		con: &ConnectionLock,
+		con: &mut ConnectionMut,
 		msg: &'a Message,
 	) -> Option<Cow<'a, str>>
 	{

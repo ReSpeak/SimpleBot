@@ -1,19 +1,16 @@
 use std::borrow::Cow;
 use std::fs;
 use std::path::Path;
-use std::sync::Weak;
 
-use futures::{future, Future};
-use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use slog::{debug, error, info};
-use tsclientlib::ConnectionLock;
+use tsclientlib::facades::ConnectionMut;
 
 use crate::action::*;
 use crate::{ActionFile, Bot, Message};
 
 /// Add builtin functions to the end of the action list.
-pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
+pub fn init(bot: &mut Bot) {
 	let p = regex::escape(&bot.settings.prefix);
 
 	let help_regex = Regex::new(&format!("^{}help", p)).unwrap();
@@ -22,30 +19,27 @@ pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 	let copy_regex = Regex::new(&format!("^{}copy", p)).unwrap();
 	add_fun(bot, copy_regex, |_, _, _| copyright());
 
-	let list_mutex = Mutex::new(None);
 	let list_regex = Regex::new(&format!("^{}list", p)).unwrap();
-	add_fun(bot, list_regex, move |b, _, m| list(b, &list_mutex, m));
+	add_fun(bot, list_regex, move |b, _, m| list(b, m));
 
 	let add_regex = Regex::new(&format!("^{}add", p)).unwrap();
 	let long_add_regex =
 		Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$", p))
 			.unwrap();
-	let b = b2.clone();
-	add_fun(bot, add_regex, move |bot, _, m| {
-		add(&b, bot, &long_add_regex, m)
+	add_fun(bot, add_regex, move |b, _, m| {
+		add(b, &long_add_regex, m)
 	});
 
 	let del_regex = Regex::new(&format!("^{}del", p)).unwrap();
 	let long_del_regex =
 		Regex::new(&format!("^{}del (?P<trigger>.*)$", p)).unwrap();
-	let b = b2.clone();
-	add_fun(bot, del_regex, move |bot, _, m| {
-		del(&b, bot, &long_del_regex, m)
+	add_fun(bot, del_regex, move |b, _, m| {
+		del(b, &long_del_regex, m)
 	});
 
 	let reload_regex = Regex::new(&format!("^{}reload$", p)).unwrap();
-	add_fun(bot, reload_regex, move |_, _, _| {
-		reload(&b2);
+	add_fun(bot, reload_regex, move |b, _, _| {
+		reload(b);
 		Some("".into())
 	});
 
@@ -54,7 +48,7 @@ pub fn init(b2: Weak<RwLock<Bot>>, bot: &mut Bot) {
 }
 
 fn add_fun<
-	F: for<'a> Fn(&Bot, &ConnectionLock, &'a Message) -> Option<Cow<'a, str>>
+	F: for<'a> Fn(&Bot, &mut ConnectionMut, &'a Message) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync
 		+ 'static,
@@ -71,8 +65,7 @@ fn add_fun<
 }
 
 fn add<'a>(
-	bot: &Weak<RwLock<Bot>>,
-	b: &Bot,
+	bot: &Bot,
 	r: &Regex,
 	msg: &'a Message,
 ) -> Option<Cow<'a, str>>
@@ -83,7 +76,7 @@ fn add<'a>(
 			return Some(
 				format!(
 					"Usage: {}add <response> on <trigger>",
-					crate::escape_bb(&b.settings.prefix)
+					crate::escape_bb(&bot.settings.prefix)
 				)
 				.into(),
 			);
@@ -93,23 +86,23 @@ fn add<'a>(
 	let trigger = caps.name("trigger").unwrap();
 
 	// Load
-	let path = Path::new(&b.settings.dynamic_actions);
+	let path = Path::new(&bot.settings.dynamic_actions);
 	let path = if path.is_absolute() {
 		path.into()
 	} else {
-		b.base_dir.join(path)
+		bot.base_dir.join(path)
 	};
 	let mut dynamic: ActionFile = match fs::read_to_string(&path) {
 		Ok(s) => match toml::from_str(&s) {
 			Ok(r) => r,
 			Err(e) => {
-				error!(b.logger, "Failed to parse dynamic actions";
+				error!(bot.logger, "Failed to parse dynamic actions";
 					"error" => ?e);
 				return Some("Failed".into());
 			}
 		},
 		Err(e) => {
-			debug!(b.logger, "Dynamic actions not loaded"; "error" => %e);
+			debug!(bot.logger, "Dynamic actions not loaded"; "error" => %e);
 			ActionFile::default()
 		}
 	};
@@ -126,7 +119,7 @@ fn add<'a>(
 
 	// Save
 	if let Err(e) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
-		error!(b.logger, "Failed to save dynamic actions"; "error" => ?e);
+		error!(bot.logger, "Failed to save dynamic actions"; "error" => ?e);
 		return Some("Failed".into());
 	}
 
@@ -136,8 +129,7 @@ fn add<'a>(
 
 /// Remove everything which matches this trigger.
 fn del<'a>(
-	bot: &Weak<RwLock<Bot>>,
-	b: &Bot,
+	bot: &Bot,
 	r: &Regex,
 	msg: &'a Message,
 ) -> Option<Cow<'a, str>>
@@ -148,7 +140,7 @@ fn del<'a>(
 			return Some(
 				format!(
 					"Usage: {}del <trigger>",
-					crate::escape_bb(&b.settings.prefix)
+					crate::escape_bb(&bot.settings.prefix)
 				)
 				.into(),
 			);
@@ -157,23 +149,23 @@ fn del<'a>(
 	let trigger = caps.name("trigger").unwrap().as_str();
 
 	// Load
-	let path = Path::new(&b.settings.dynamic_actions);
+	let path = Path::new(&bot.settings.dynamic_actions);
 	let path = if path.is_absolute() {
 		path.into()
 	} else {
-		b.base_dir.join(path)
+		bot.base_dir.join(path)
 	};
 	let mut dynamic: ActionFile = match fs::read_to_string(&path) {
 		Ok(s) => match toml::from_str(&s) {
 			Ok(r) => r,
 			Err(e) => {
-				error!(b.logger, "Failed to parse dynamic actions";
+				error!(bot.logger, "Failed to parse dynamic actions";
 					"error" => ?e);
 				return Some("Failed".into());
 			}
 		},
 		Err(e) => {
-			debug!(b.logger, "Dynamic actions not loaded"; "error" => %e);
+			debug!(bot.logger, "Dynamic actions not loaded"; "error" => %e);
 			ActionFile::default()
 		}
 	};
@@ -189,7 +181,7 @@ fn del<'a>(
 
 	// Save
 	if let Err(e) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
-		error!(b.logger, "Failed to save dynamic actions"; "error" => ?e);
+		error!(bot.logger, "Failed to save dynamic actions"; "error" => ?e);
 		return Some("Failed".into());
 	}
 
@@ -201,32 +193,20 @@ fn del<'a>(
 	}
 }
 
-fn reload(b: &Weak<RwLock<Bot>>) {
-	if let Some(b2) = b.upgrade() {
-		let b = b.clone();
-		tokio::spawn(future::lazy(move || {
-			let mut bot = b2.write();
-
-			match crate::load_settings(b, &mut bot) {
-				Ok(()) => info!(bot.logger, "Reloaded successfully"),
-				Err(e) => error!(bot.logger, "Failed to reload"; "error" => ?e),
-			}
-			Ok(())
-		}));
-	}
+fn reload(bot: &Bot) {
+	bot.should_reload.set(true);
 }
 
 fn quit<'a>(
 	bot: &Bot,
-	con: &ConnectionLock,
+	con: &mut ConnectionMut,
 	msg: &'a Message,
 ) -> Option<Cow<'a, str>>
 {
 	info!(bot.logger, "Leaving on request"; "message" => ?msg);
 	// We get no disconnect message here
-	tokio::spawn(con.to_mut().remove()
-		// Ignore errors on disconnect
-		.map_err(move |_| ()));
+	// Ignore errors on disconnect
+	let _ = con.remove();
 	Some("".into())
 }
 
@@ -253,61 +233,15 @@ fn copyright() -> Option<Cow<'static, str>> {
 		"This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
 		This software is licensed under MIT and Apache License, Version 2.0.\n\
 		See the website for more information.\n\
-		© 2018–2019 Flakebi".into(),
+		© 2018–2020 Flakebi".into(),
 	)
 }
 
-type ListPages = Vec<String>;
 fn list<'a>(
 	bot: &Bot,
-	list: &Mutex<Option<ListPages>>,
 	msg: &Message,
 ) -> Option<Cow<'a, str>>
 {
-	let mut list = list.lock();
-	if list.is_none() {
-		let mut matchers = Vec::new();
-		for a in &bot.actions.0 {
-			let mut res = String::new();
-			for m in &a.matchers {
-				match m {
-					Matcher::Regex(r) => {
-						let mut r = r.as_str().to_string();
-						r = r.replace(&['^', '$'][..], "");
-						r = r.replace("\\b", "");
-
-						r = r.replace("\\\\", "\\");
-						r = r.replace("\\.", ".");
-						res.push_str(&r);
-					}
-					Matcher::Mode(m) => res.push_str(&format!(
-						" (only in {} mode)",
-						Reaction::get_mode(m)
-					)),
-				}
-			}
-			matchers.push(res);
-		}
-		matchers.sort_unstable();
-		matchers.dedup();
-
-		// Group lines so thet at maximum 900 chars are on one page
-		// (there will be additional text later).
-		let mut res = vec![String::new()];
-		for m in matchers {
-			if res.last().unwrap().len() + m.len() > 900 {
-				res.push(String::new());
-			}
-			let cur = res.last_mut().unwrap();
-			cur.push('\n');
-			cur.push_str(&m);
-		}
-
-		*list = Some(res);
-	}
-
-	let list = list.as_ref().unwrap();
-
 	let mut page = 0;
 	if let Some(i) = msg.message.rfind(' ') {
 		if let Ok(n) = (msg.message[i + 1..]).parse::<usize>() {
@@ -318,16 +252,16 @@ fn list<'a>(
 		}
 	}
 
-	if page >= list.len() {
-		page = list.len() - 1;
+	if page >= bot.list.len() {
+		page = bot.list.len() - 1;
 	}
 
-	let page_s = list[page].clone();
-	let res = if list.len() > 1 {
+	let page_s = bot.list[page].clone();
+	let res = if bot.list.len() > 1 {
 		format!(
 			"Page {}/{}, use [i]{}list <page>[/i] to show more.{}",
 			page + 1,
-			list.len(),
+			bot.list.len(),
 			crate::escape_bb(&bot.settings.prefix),
 			page_s, //crate::escape_bb(&page_s),
 		)
@@ -336,4 +270,45 @@ fn list<'a>(
 	};
 
 	Some(res.into())
+}
+
+pub fn init_list(bot: &mut Bot) {
+	let mut matchers = Vec::new();
+	for a in &bot.actions.0 {
+		let mut res = String::new();
+		for m in &a.matchers {
+			match m {
+				Matcher::Regex(r) => {
+					let mut r = r.as_str().to_string();
+					r = r.replace(&['^', '$'][..], "");
+					r = r.replace("\\b", "");
+
+					r = r.replace("\\\\", "\\");
+					r = r.replace("\\.", ".");
+					res.push_str(&r);
+				}
+				Matcher::Mode(m) => res.push_str(&format!(
+					" (only in {} mode)",
+					Reaction::get_mode(m)
+				)),
+			}
+		}
+		matchers.push(res);
+	}
+	matchers.sort_unstable();
+	matchers.dedup();
+
+	// Group lines so thet at maximum 900 chars are on one page
+	// (there will be additional text later).
+	let mut res = vec![String::new()];
+	for m in matchers {
+		if res.last().unwrap().len() + m.len() > 900 {
+			res.push(String::new());
+		}
+		let cur = res.last_mut().unwrap();
+		cur.push('\n');
+		cur.push_str(&m);
+	}
+
+	bot.list = res;
 }

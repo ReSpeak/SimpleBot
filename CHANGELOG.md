@@ -7,3 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Rate limiting responses: Can be accessed by `rate_limit` in the settings
+
+### Changed
+- Update tsclientlib
