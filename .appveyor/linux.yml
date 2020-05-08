@@ -16,7 +16,6 @@ environment:
 
 cache:
 - /home/appveyor/.cargo
-- /home/appveyor/projects/simplebot/target
 
 install:
 - sh: curl https://sh.rustup.rs -sSf | sh -s -- -y
@@ -34,6 +33,6 @@ deploy_script:
 - ps: >-
     if(${env:UPLOAD_TOKEN}) {
       cd /home/appveyor/projects/simplebot/target/release/
-      Compress-Archive -Path ./simple-bot -DestinationPath SimpleBot.zip
+      Compress-Archive -Force -Path ./simple-bot -DestinationPath SimpleBot.zip
       Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_linux?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
     }

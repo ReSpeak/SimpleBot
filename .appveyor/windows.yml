@@ -19,7 +19,6 @@ environment:
 
 cache:
 - C:\Users\appveyor\.cargo\registry
-- C:\projects\simple-bot\target
 
 install:
 - ps: $Env:PATH += ';C:\msys64\usr\bin'
@@ -40,6 +39,6 @@ deploy_script:
 - ps: >-
     if(${env:UPLOAD_TOKEN}) {
       cd([io.path]::combine("${env:APPVEYOR_BUILD_FOLDER}", "target", "release"))
-      Compress-Archive -Path simple-bot.exe -DestinationPath SimpleBot.zip
+      Compress-Archive -Force -Path simple-bot.exe -DestinationPath SimpleBot.zip
       Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_windows?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
     }
