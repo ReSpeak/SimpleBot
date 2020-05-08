@@ -10,10 +10,9 @@ use slog::{debug, error, info, o, warn, Drain, Logger};
 use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
-	facades, ConnectOptions, Connection, DisconnectOptions, InvokerRef,
+	facades, ConnectOptions, Connection, DisconnectOptions, Identity, InvokerRef,
 	MessageTarget, Reason, StreamItem,
 };
-use tsproto::Identity;
 
 const SETTINGS_FILENAME: &str = "settings.toml";
 
@@ -236,10 +235,10 @@ async fn real_main() -> Result<()> {
 		bot.base_dir.join(&bot.settings.key_file)
 	};
 	private_key = match fs::read(&file) {
-		Ok(r) => tsproto::crypto::EccKeyPrivP256::import(&r)?,
+		Ok(r) => tsproto_types::crypto::EccKeyPrivP256::import(&r)?,
 		_ => {
 			// Create new key
-			let key = tsproto::crypto::EccKeyPrivP256::create()?;
+			let key = tsproto_types::crypto::EccKeyPrivP256::create()?;
 
 			// Create directory
 			if let Err(e) = fs::create_dir_all(&bot.base_dir) {

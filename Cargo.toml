@@ -22,10 +22,10 @@ slog-envlogger = "2"
 slog-term = "2"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "0.2", features = ["macros", "rt-core", "signal"] }
-toml = "0.4"
-tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", branch = "develop", default-features = false }
+toml = "0.5"
+tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", default-features = false }
 # TODO Needed to load the private key
-tsproto = { git = "https://github.com/ReSpeak/tsclientlib", branch = "develop" }
+tsproto-types = { git = "https://github.com/ReSpeak/tsclientlib" }
 
 [dependencies.slog]
 version = "2"
