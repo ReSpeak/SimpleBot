@@ -10,8 +10,8 @@ use slog::{debug, error, info, o, warn, Drain, Logger};
 use structopt::StructOpt;
 use tsclientlib::events::Event;
 use tsclientlib::{
-	facades, ConnectOptions, Connection, DisconnectOptions, Identity, InvokerRef,
-	MessageTarget, Reason, StreamItem,
+	facades, ChannelId, ConnectOptions, Connection, DisconnectOptions,
+	Identity, InvokerRef, MessageTarget, Reason, StreamItem,
 };
 
 const SETTINGS_FILENAME: &str = "settings.toml";
@@ -79,13 +79,18 @@ pub struct Settings {
 	#[serde(default = "default_dynamic_actions")]
 	dynamic_actions: String,
 
-	/// The address of the server to connect to
+	/// The address of the server to connect to.
 	///
 	/// # Default
 	/// `localhost`
 	#[serde(default = "default_address")]
 	address: String,
-	// TODO Support a default channel
+	/// The channel on the server to connect to.
+	///
+	/// E.g. 4, "My Channel" or "My Channel/Nested"
+	///
+	/// # Default
+	/// `None`
 	channel: Option<ChannelDefinition>,
 	/// The name of the bot.
 	///
@@ -223,7 +228,6 @@ async fn real_main() -> Result<()> {
 	bot.settings_path = settings_path;
 	let private_key;
 	let disconnect_message;
-	let con_config;
 	load_settings(&mut bot)?;
 	disconnect_message = bot.settings.disconnect_message.clone();
 
@@ -257,7 +261,7 @@ async fn real_main() -> Result<()> {
 	};
 	let identity = Identity::new(private_key, 0);
 
-	con_config = ConnectOptions::new(bot.settings.address.clone())
+	let mut con_config = ConnectOptions::new(bot.settings.address.clone())
 		.identity(identity)
 		.name(bot.settings.name.clone())
 		.logger(logger.clone())
@@ -265,8 +269,18 @@ async fn real_main() -> Result<()> {
 		.log_packets(args.verbose >= 2)
 		.log_udp_packets(args.verbose >= 3);
 
+	match &bot.settings.channel {
+		Some(ChannelDefinition::Id(channel)) => {
+			con_config = con_config.channel_id(ChannelId(*channel));
+		}
+		Some(ChannelDefinition::Name(channel)) => {
+			con_config = con_config.channel(channel.clone());
+		}
+		_ => {}
+	}
+
 	// Connect
-	let mut con= Connection::new(con_config)?;
+	let mut con = Connection::new(con_config)?;
 	let r = con
 		.events()
 		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
@@ -381,7 +395,12 @@ fn load_actions(
 	Ok(())
 }
 
-fn handle_event(bot: &mut Bot, con: &mut facades::ConnectionMut, event: &[Event]) {
+fn handle_event(
+	bot: &mut Bot,
+	con: &mut facades::ConnectionMut,
+	event: &[Event],
+)
+{
 	for e in event {
 		match e {
 			Event::Message {
@@ -420,7 +439,8 @@ fn handle_event(bot: &mut Bot, con: &mut facades::ConnectionMut, event: &[Event]
 				};
 				if let Some(response) = bot.actions.handle(bot, con, &msg) {
 					bot.rate_limiting.push(Instant::now());
-					if let Err(e) = con.send_message(*target, response.as_ref()) {
+					if let Err(e) = con.send_message(*target, response.as_ref())
+					{
 						error!(bot.logger, "Failed to send response"; "error" => ?e)
 					}
 				}

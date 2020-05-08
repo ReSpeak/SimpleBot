@@ -51,6 +51,9 @@ The bot supports a simple configuration in a `settings.toml` file. The default o
 ```toml
 # The server to connect to
 address = "localhost"
+# The channel to connect to
+# This can be e.g. 4, "My Channel" or "My Channel/Nested"
+channel = ""
 # The name of the bot
 name = "SimpleBot"
 # How many responses can be sent per second
