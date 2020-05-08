@@ -26,16 +26,12 @@ pub fn init(bot: &mut Bot) {
 	let long_add_regex =
 		Regex::new(&format!("^{}add (?P<response>.*) on (?P<trigger>.*)$", p))
 			.unwrap();
-	add_fun(bot, add_regex, move |b, _, m| {
-		add(b, &long_add_regex, m)
-	});
+	add_fun(bot, add_regex, move |b, _, m| add(b, &long_add_regex, m));
 
 	let del_regex = Regex::new(&format!("^{}del", p)).unwrap();
 	let long_del_regex =
 		Regex::new(&format!("^{}del (?P<trigger>.*)$", p)).unwrap();
-	add_fun(bot, del_regex, move |b, _, m| {
-		del(b, &long_del_regex, m)
-	});
+	add_fun(bot, del_regex, move |b, _, m| del(b, &long_del_regex, m));
 
 	let reload_regex = Regex::new(&format!("^{}reload$", p)).unwrap();
 	add_fun(bot, reload_regex, move |b, _, _| {
@@ -48,7 +44,11 @@ pub fn init(bot: &mut Bot) {
 }
 
 fn add_fun<
-	F: for<'a> Fn(&Bot, &mut ConnectionMut, &'a Message) -> Option<Cow<'a, str>>
+	F: for<'a> Fn(
+			&Bot,
+			&mut ConnectionMut,
+			&'a Message,
+		) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync
 		+ 'static,
@@ -64,12 +64,7 @@ fn add_fun<
 	});
 }
 
-fn add<'a>(
-	bot: &Bot,
-	r: &Regex,
-	msg: &'a Message,
-) -> Option<Cow<'a, str>>
-{
+fn add<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
 		None => {
@@ -128,12 +123,7 @@ fn add<'a>(
 }
 
 /// Remove everything which matches this trigger.
-fn del<'a>(
-	bot: &Bot,
-	r: &Regex,
-	msg: &'a Message,
-) -> Option<Cow<'a, str>>
-{
+fn del<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let caps = match r.captures(msg.message) {
 		Some(r) => r,
 		None => {
@@ -193,9 +183,7 @@ fn del<'a>(
 	}
 }
 
-fn reload(bot: &Bot) {
-	bot.should_reload.set(true);
-}
+fn reload(bot: &Bot) { bot.should_reload.set(true); }
 
 fn quit<'a>(
 	bot: &Bot,
@@ -237,11 +225,7 @@ fn copyright() -> Option<Cow<'static, str>> {
 	)
 }
 
-fn list<'a>(
-	bot: &Bot,
-	msg: &Message,
-) -> Option<Cow<'a, str>>
-{
+fn list<'a>(bot: &Bot, msg: &Message) -> Option<Cow<'a, str>> {
 	let mut page = 0;
 	if let Some(i) = msg.message.rfind(' ') {
 		if let Ok(n) = (msg.message[i + 1..]).parse::<usize>() {

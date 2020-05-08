@@ -6,8 +6,8 @@ use anyhow::{bail, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use slog::error;
-use tsclientlib::{MessageTarget, TextMessageTargetMode};
 use tsclientlib::facades::ConnectionMut;
+use tsclientlib::{MessageTarget, TextMessageTargetMode};
 
 use crate::{Bot, Message};
 
@@ -51,7 +51,11 @@ pub enum Matcher {
 }
 
 type ReactionFunction = Box<
-	dyn for<'a> Fn(&Bot, &mut ConnectionMut, &'a Message) -> Option<Cow<'a, str>>
+	dyn for<'a> Fn(
+			&Bot,
+			&mut ConnectionMut,
+			&'a Message,
+		) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync,
 >;
