@@ -5,9 +5,8 @@ use std::process::Command;
 use anyhow::{bail, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use slog::error;
-use tsclientlib::facades::ConnectionMut;
-use tsclientlib::{MessageTarget, TextMessageTargetMode};
+use tracing::error;
+use tsclientlib::{Connection, MessageTarget, TextMessageTargetMode};
 
 use crate::{Bot, Message};
 
@@ -51,11 +50,7 @@ pub enum Matcher {
 }
 
 type ReactionFunction = Box<
-	dyn for<'a> Fn(
-			&Bot,
-			&mut ConnectionMut,
-			&'a Message,
-		) -> Option<Cow<'a, str>>
+	dyn for<'a> Fn(&Bot, &mut Connection, &'a Message) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync,
 >;
@@ -158,33 +153,17 @@ impl Matcher {
 			Matcher::Regex(r) => r.is_match(msg.message),
 			Matcher::Mode(m) => match m {
 				Some(TextMessageTargetMode::Server) => {
-					if let MessageTarget::Server = msg.target {
-						true
-					} else {
-						false
-					}
+					matches!(msg.target, MessageTarget::Server)
 				}
 				Some(TextMessageTargetMode::Channel) => {
-					if let MessageTarget::Channel = msg.target {
-						true
-					} else {
-						false
-					}
+					matches!(msg.target, MessageTarget::Channel)
 				}
 				Some(TextMessageTargetMode::Client) => {
-					if let MessageTarget::Client(_) = msg.target {
-						true
-					} else {
-						false
-					}
+					matches!(msg.target, MessageTarget::Client(_))
 				}
 				Some(TextMessageTargetMode::Unknown) => false,
 				None => {
-					if let MessageTarget::Poke(_) = msg.target {
-						true
-					} else {
-						false
-					}
+					matches!(msg.target, MessageTarget::Poke(_))
 				}
 			},
 		}
@@ -217,10 +196,9 @@ impl Reaction {
 	pub fn execute<'a>(
 		&'a self,
 		bot: &Bot,
-		con: &mut ConnectionMut,
+		con: &mut Connection,
 		msg: &'a Message,
-	) -> Option<Cow<'a, str>>
-	{
+	) -> Option<Cow<'a, str>> {
 		match self {
 			Reaction::Plain(s) => Some(Cow::Borrowed(s.as_str())),
 			Reaction::Command(s) | Reaction::Shell(s) => {
@@ -278,9 +256,8 @@ impl Reaction {
 
 				let output = match output {
 					Ok(o) => o,
-					Err(e) => {
-						error!(bot.logger, "Failed to execute shell";
-							"command" => s, "error" => ?e);
+					Err(error) => {
+						error!(%error, command = s.as_str(), "Failed to execute shell");
 						// Don't proceed
 						return Some("".into());
 					}
@@ -293,10 +270,8 @@ impl Reaction {
 				// Try to parse result
 				let res = match std::str::from_utf8(&output.stdout) {
 					Ok(r) => r,
-					Err(e) => {
-						error!(bot.logger, "Failed to parse output";
-							"command" => s, "error" => ?e,
-							"output" => ?output.stdout);
+					Err(error) => {
+						error!(%error, command = s.as_str(), output = ?output.stdout, "Failed to parse output");
 						// Don't proceed
 						return Some("".into());
 					}
@@ -313,10 +288,9 @@ impl ActionList {
 	pub fn handle<'a>(
 		&'a self,
 		bot: &Bot,
-		con: &mut ConnectionMut,
+		con: &mut Connection,
 		msg: &'a Message,
-	) -> Option<Cow<'a, str>>
-	{
+	) -> Option<Cow<'a, str>> {
 		'actions: for a in &self.0 {
 			for m in &a.matchers {
 				if !m.matches(msg) {

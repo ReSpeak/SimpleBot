@@ -1,10 +1,11 @@
 use std::borrow::Cow;
+use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
 use regex::Regex;
-use slog::{debug, error, info};
-use tsclientlib::facades::ConnectionMut;
+use tracing::{debug, error, info};
+use tsclientlib::{Connection, DisconnectOptions};
 
 use crate::action::*;
 use crate::{ActionFile, Bot, Message};
@@ -40,15 +41,11 @@ pub fn init(bot: &mut Bot) {
 	});
 
 	let quit_regex = Regex::new(&format!("^{}quit$", p)).unwrap();
-	add_fun(bot, quit_regex, move |b, c, m| quit(b, c, m));
+	add_fun(bot, quit_regex, quit);
 }
 
 fn add_fun<
-	F: for<'a> Fn(
-			&Bot,
-			&mut ConnectionMut,
-			&'a Message,
-		) -> Option<Cow<'a, str>>
+	F: for<'a> Fn(&Bot, &mut Connection, &'a Message) -> Option<Cow<'a, str>>
 		+ Send
 		+ Sync
 		+ 'static,
@@ -56,8 +53,7 @@ fn add_fun<
 	bot: &mut Bot,
 	r: Regex,
 	f: F,
-)
-{
+) {
 	bot.actions.0.push(Action {
 		matchers: vec![Matcher::Regex(r)],
 		reaction: Some(Reaction::Function(Box::new(f))),
@@ -90,14 +86,13 @@ fn add<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let mut dynamic: ActionFile = match fs::read_to_string(&path) {
 		Ok(s) => match toml::from_str(&s) {
 			Ok(r) => r,
-			Err(e) => {
-				error!(bot.logger, "Failed to parse dynamic actions";
-					"error" => ?e);
+			Err(error) => {
+				error!(%error, "Failed to parse dynamic actions");
 				return Some("Failed".into());
 			}
 		},
-		Err(e) => {
-			debug!(bot.logger, "Dynamic actions not loaded"; "error" => %e);
+		Err(error) => {
+			debug!(%error, "Dynamic actions not loaded");
 			ActionFile::default()
 		}
 	};
@@ -113,8 +108,8 @@ fn add<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	});
 
 	// Save
-	if let Err(e) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
-		error!(bot.logger, "Failed to save dynamic actions"; "error" => ?e);
+	if let Err(error) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
+		error!(%error, "Failed to save dynamic actions");
 		return Some("Failed".into());
 	}
 
@@ -148,14 +143,13 @@ fn del<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	let mut dynamic: ActionFile = match fs::read_to_string(&path) {
 		Ok(s) => match toml::from_str(&s) {
 			Ok(r) => r,
-			Err(e) => {
-				error!(bot.logger, "Failed to parse dynamic actions";
-					"error" => ?e);
+			Err(error) => {
+				error!(%error, "Failed to parse dynamic actions");
 				return Some("Failed".into());
 			}
 		},
-		Err(e) => {
-			debug!(bot.logger, "Dynamic actions not loaded"; "error" => %e);
+		Err(error) => {
+			debug!(%error, "Dynamic actions not loaded");
 			ActionFile::default()
 		}
 	};
@@ -170,8 +164,8 @@ fn del<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	});
 
 	// Save
-	if let Err(e) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
-		error!(bot.logger, "Failed to save dynamic actions"; "error" => ?e);
+	if let Err(error) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
+		error!(%error, "Failed to save dynamic actions");
 		return Some("Failed".into());
 	}
 
@@ -186,15 +180,14 @@ fn del<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 fn reload(bot: &Bot) { bot.should_reload.set(true); }
 
 fn quit<'a>(
-	bot: &Bot,
-	con: &mut ConnectionMut,
-	msg: &'a Message,
-) -> Option<Cow<'a, str>>
-{
-	info!(bot.logger, "Leaving on request"; "message" => ?msg);
+	_: &Bot,
+	con: &mut Connection,
+	message: &'a Message,
+) -> Option<Cow<'a, str>> {
+	info!(?message, "Leaving on request");
 	// We get no disconnect message here
 	// Ignore errors on disconnect
-	let _ = con.remove();
+	let _ = con.disconnect(DisconnectOptions::new());
 	Some("".into())
 }
 
@@ -221,7 +214,7 @@ fn copyright() -> Option<Cow<'static, str>> {
 		"This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
 		This software is licensed under MIT and Apache License, Version 2.0.\n\
 		See the website for more information.\n\
-		© 2018–2020 Flakebi".into(),
+		© 2018–2022 Flakebi".into(),
 	)
 }
 
@@ -271,10 +264,13 @@ pub fn init_list(bot: &mut Bot) {
 					r = r.replace("\\.", ".");
 					res.push_str(&r);
 				}
-				Matcher::Mode(m) => res.push_str(&format!(
-					" (only in {} mode)",
-					Reaction::get_mode(m)
-				)),
+				Matcher::Mode(m) => {
+					let _ = write!(
+						res,
+						" (only in {} mode)",
+						Reaction::get_mode(m)
+					);
+				}
 			}
 		}
 		matchers.push(res);
