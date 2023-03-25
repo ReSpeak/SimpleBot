@@ -3,6 +3,7 @@ use std::fmt;
 use std::process::Command;
 
 use anyhow::{bail, Result};
+use base64::{prelude::BASE64_STANDARD, Engine as _};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::error;
@@ -210,10 +211,10 @@ impl Reaction {
 					cmd.args(split)
 						// Arguments
 						.arg(Self::get_target(&msg.target))
-						.arg(&msg.message)
+						.arg(msg.message)
 						.arg(msg.invoker.name);
 					if let Some(uid) = &msg.invoker.uid {
-						cmd.arg(&base64::encode(&uid.0));
+						cmd.arg(&BASE64_STANDARD.encode(&uid.0));
 					}
 					output = cmd.output();
 				} else {
@@ -228,10 +229,10 @@ impl Reaction {
 							.arg("sh")
 							// Arguments
 							.arg(Self::get_target(&msg.target))
-							.arg(&msg.message)
+							.arg(msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
-							cmd.arg(&base64::encode(&uid.0));
+							cmd.arg(&BASE64_STANDARD.encode(&uid.0));
 						}
 						output = cmd.output();
 					}
@@ -245,7 +246,7 @@ impl Reaction {
 							.arg(s)
 							// Arguments
 							.arg(Self::get_target(&msg.target))
-							.arg(&msg.message)
+							.arg(msg.message)
 							.arg(msg.invoker.name);
 						if let Some(uid) = &msg.invoker.uid {
 							cmd.arg(&base64::encode(&uid.0));

@@ -12,17 +12,14 @@ debug = true
 
 [dependencies]
 anyhow = "1"
-base64 = "0.13"
+base64 = "0.21"
 directories-next = "2"
 futures = "0.3"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-slog-async = "2"
-slog-envlogger = "2"
-slog-term = "2"
-clap = { version = "3", default-features = false, features = ["derive", "std"] }
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["signal"] }
-toml = "0.5"
+toml = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [ "env-filter" ] }
 tsclientlib = { git = "https://github.com/ReSpeak/tsclientlib", default-features = false }

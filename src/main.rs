@@ -191,7 +191,7 @@ async fn main() -> Result<()> { real_main().await }
 async fn real_main() -> Result<()> {
 	tracing_subscriber::fmt::init();
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	// Load settings
 	let settings_path;
@@ -241,7 +241,7 @@ async fn real_main() -> Result<()> {
 				error!(%error, "Failed to create config dictionary");
 			}
 			// Write to file
-			if let Err(error) = fs::write(&file, &key.to_short()) {
+			if let Err(error) = fs::write(&file, key.to_short()) {
 				warn!(%error, "file" = ?file.to_str(), "Failed to store the private key, the server \
 					identity will not be the same in the next run");
 			}
@@ -348,7 +348,7 @@ fn load_settings(bot: &mut Bot) -> Result<()> {
 	} else {
 		bot.base_dir.join(path)
 	};
-	let dynamic: ActionFile = match fs::read_to_string(&path) {
+	let dynamic: ActionFile = match fs::read_to_string(path) {
 		Ok(s) => toml::from_str(&s)?,
 		Err(error) => {
 			debug!(%error, "Dynamic actions not loaded");

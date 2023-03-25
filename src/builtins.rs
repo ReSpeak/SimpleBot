@@ -108,7 +108,7 @@ fn add<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	});
 
 	// Save
-	if let Err(error) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
+	if let Err(error) = fs::write(&path, toml::to_string(&dynamic).unwrap()) {
 		error!(%error, "Failed to save dynamic actions");
 		return Some("Failed".into());
 	}
@@ -164,7 +164,7 @@ fn del<'a>(bot: &Bot, r: &Regex, msg: &'a Message) -> Option<Cow<'a, str>> {
 	});
 
 	// Save
-	if let Err(error) = fs::write(&path, &toml::to_vec(&dynamic).unwrap()) {
+	if let Err(error) = fs::write(&path, toml::to_string(&dynamic).unwrap()) {
 		error!(%error, "Failed to save dynamic actions");
 		return Some("Failed".into());
 	}
@@ -214,7 +214,7 @@ fn copyright() -> Option<Cow<'static, str>> {
 		"This is a [URL=https://github.com/ReSpeak/SimpleBot]SimpleBot[/URL].\n\
 		This software is licensed under MIT and Apache License, Version 2.0.\n\
 		See the website for more information.\n\
-		© 2018–2022 Flakebi".into(),
+		© 2018–2023 Flakebi".into(),
 	)
 }
 
