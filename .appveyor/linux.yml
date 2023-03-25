@@ -1,5 +1,5 @@
 version: 0.1.{build}
-image: Ubuntu1804
+image: Ubuntu2004
 platform: x64
 clone_depth: 1
 branches:
@@ -29,10 +29,10 @@ build_script:
 test_script:
 - cargo test
 
-deploy_script:
-- ps: >-
-    if(${env:UPLOAD_TOKEN}) {
-      cd /home/appveyor/projects/simplebot/target/release/
-      Compress-Archive -Force -Path ./simple-bot -DestinationPath SimpleBot.zip
-      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_linux?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
-    }
+#deploy_script:
+#- ps: >-
+#    if(${env:UPLOAD_TOKEN}) {
+#      cd /home/appveyor/projects/simplebot/target/release/
+#      Compress-Archive -Force -Path ./simple-bot -DestinationPath SimpleBot.zip
+#      Invoke-RestMethod -Uri "https://splamy.de/api/nightly/simplebot/${env:APPVEYOR_REPO_BRANCH}_linux?filename=SimpleBot.zip&commit=${env:APPVEYOR_REPO_COMMIT}&version=0.1.0" -Headers @{ "Content-Type" = "application/zip"; "Authorization" = "${env:UPLOAD_TOKEN}" } -Method Put -InFile ./SimpleBot.zip
+#    }
